@@ -25,11 +25,21 @@ void activatePump();
 void deactivatePump();
 void saveUsagePattern();
 void loadUsagePattern();
-void IRAM_ATTR flowPulse();
 void generateVisualizationPage();
 void setupOTA();
+void readAndSmoothFlowValue();
+
+int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
 bool slotRecorded = false; // Tracks if usage has been recorded for the current slot
+const int FLOW_SENSOR_THRESHOLD = 600;    // Threshold for detecting flow
+const int MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE = 2000; 
+float smoothedFlowValue = 0;   // Smoothed flow value
+int peakFlowValue = 0;
+u_int32_t rmsValue = 0;             // sum value detected within the current interval
+unsigned long lastSmoothTime = 0; // Timestamp for the last smoothing operation
+const unsigned long smoothingInterval = 2000; // Smoothing interval in milliseconds
+const float alpha = 0.1;        // Smoothing factor (adjust for desired smoothness)
 
 // Webserver
 WebServer server(80);
@@ -43,17 +53,15 @@ char password[64] = "";  // Mutable array to hold the WiFi password
 
 // NTP Configuration
 const char* ntpServer = "pool.ntp.org";
-int timezoneOffset = 0; // Default timezone offset in seconds
 
 // GPIO Pins
 #define FLOW_SENSOR_PIN 34
 #define PUMP_RELAY_PIN 27
 
+#define FLOW_SENSOR_THRESHOLD 1000
+
 // Usage pattern (7 days x 96 slots for 15-minute intervals)
 int usagePattern[7][96] = {0};
-
-// Flow sensor variables
-volatile int pulseCount = 0;
 
 // Timer
 unsigned long lastSampleTime = 0;
@@ -68,6 +76,9 @@ void setup() {
 
   // Initialize Preferences
   preferences.begin("water-usage", false);
+
+  // Set the ADC attenuation to 0dB for 0–1.1V range
+  analogSetPinAttenuation(FLOW_SENSOR_PIN, ADC_0db);
 
   // Load Wi-Fi credentials
   loadWiFiCredentials();
@@ -93,7 +104,6 @@ void setup() {
     startAccessPoint();
   }
 
-
   // Fetch timezone offset
   fetchTimezoneOffset();
 
@@ -104,9 +114,8 @@ void setup() {
   setupOTA();
 
   // Set up flow sensor
-  pinMode(FLOW_SENSOR_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), flowPulse, RISING);
-
+  pinMode(FLOW_SENSOR_PIN, INPUT);
+  
   // Set up pump relay
   pinMode(PUMP_RELAY_PIN, OUTPUT);
   digitalWrite(PUMP_RELAY_PIN, LOW);
@@ -125,8 +134,9 @@ server.on("/", HTTP_GET, []() {
     <body>
       <h1>Home</h1>
       <ul>
-        <li><a href="/grid">Edit Usage Grid</a></li>
+        <li><a href="/status">Status</a></li> 
         <li><a href="/visualize">View Usage Data</a></li>
+        <li><a href="/grid">Edit Usage Grid</a></li>
         <li><a href="/wificonfig">WiFi Configuration</a></li>
         <li><a href="/update">Over-the-Air (OTA) Update</a></li>
       </ul>
@@ -221,61 +231,57 @@ server.on("/grid", HTTP_GET, []() {
       <style>
         .table-container {
           display: block;
-          overflow-x: auto; /* Allow horizontal scrolling */
-          white-space: nowrap; /* Prevent wrapping of table rows */
+          overflow-x: auto;
+          white-space: nowrap;
           position: relative;
           padding: 10px;
-          margin-left: auto; /* Center align table within the scrollable container */
-          margin-right: auto; /* Center align table within the scrollable container */
+          margin-left: auto;
+          margin-right: auto;
         }
         table {
           font-family: Arial, sans-serif;
           border-collapse: collapse;
-          margin: 0 auto; /* Center table within its container */
-          width: max-content; /* Ensure table is only as wide as its content */
+          margin: 0 auto;
+          width: max-content;
         }
         td, th {
           border: 1px solid #dddddd;
           text-align: center;
           padding: 4px;
         }
-        th.full-hour {
-          border-left: 2px solid #000; /* Thicker border for full hour */
-        }
-        td.full-hour {
-          border-left: 2px solid #000; /* Thicker border for full hour */
-        }
         tr:nth-child(even) {
           background-color: #f9f9f9;
         }
         input {
-          width: 30px; /* Smaller input field */
+          width: 30px;
           text-align: center;
         }
         .save-button-container {
           text-align: center;
           margin-top: 20px;
-        }
-        .save-button-container input {
-          font-size: 16px;
-          padding: 10px 20px; /* Proper padding for the button */
-          width: auto; /* Let the button adjust to its content */
-          display: inline-block;
-        }
-        body {
-          margin: 0;
-          padding: 0;
           display: flex;
-          flex-direction: column;
-          align-items: center;
+          justify-content: center;
+          gap: 15px; /* Space between buttons */
+        }
+        .save-button-container input,
+        .save-button-container button {
+          font-size: 16px;
+          padding: 10px 20px; /* Proper padding for both buttons */
+          width: auto;
+          height: 50px; /* Ensure both buttons are the same height */
+          box-sizing: border-box; /* Ensure padding is included in the height */
+        }
+        .reset-button {
+          color: white;
+          background-color: red;
+          border: none;
+          cursor: pointer;
+        }
+        .reset-button:hover {
+          background-color: darkred;
         }
       </style>
       <script>
-        function scrollTableToStart() {
-          const container = document.querySelector('.table-container');
-          container.scrollLeft = 0; // Ensure scrolling starts at the beginning
-        }
-
         function highlightNonZeroValues() {
           const inputs = document.querySelectorAll('input[type="number"]');
           inputs.forEach(input => {
@@ -287,17 +293,38 @@ server.on("/grid", HTTP_GET, []() {
           });
         }
 
+        function confirmReset() {
+          if (confirm('Are you sure you want to reset the entire grid? This action cannot be undone!')) {
+            fetch('/resetgrid', { method: 'POST' })
+              .then(response => {
+                if (response.ok) {
+                  // Reset successful: Clear inputs in the browser
+                  const inputs = document.querySelectorAll('input[type="number"]');
+                  inputs.forEach(input => {
+                    input.value = 0;
+                    input.style.backgroundColor = ''; // Clear yellow highlight
+                  });
+                  alert('Grid reset successfully!');
+                } else {
+                  throw new Error('Failed to reset grid.');
+                }
+              })
+              .catch(error => {
+                alert('Error resetting the grid: ' + error);
+              });
+          }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-          scrollTableToStart(); // Scroll to the beginning on page load
-          highlightNonZeroValues(); // Highlight on page load
+          highlightNonZeroValues();
           document.querySelectorAll('input[type="number"]').forEach(input => {
-            input.addEventListener('input', highlightNonZeroValues); // Update on input
+            input.addEventListener('input', highlightNonZeroValues);
           });
         });
       </script>
     </head>
     <body>
-      <h2>Usage Grid</h2>
+      <h2>Edit Usage Grid</h2>
       <div class="table-container">
         <form method="POST" action="/savegrid">
           <table>
@@ -305,26 +332,25 @@ server.on("/grid", HTTP_GET, []() {
               <th>Day</th>
   )rawliteral";
 
-  // Add column descriptions for every full hour
+  // Add column headers for the time slots (local time)
   for (int i = 0; i < 96; i++) {
-    if (i % 4 == 0) { // Start of each full hour
-      html += "<th class='full-hour'>" + String(i / 4) + ":00</th>";
+    if (i % 4 == 0) { // Add labels at full hours
+      html += "<th>" + String(i / 4) + ":00</th>";
     } else {
       html += "<th></th>";
     }
   }
   html += "</tr>";
 
+  // Add rows for each day of the week
   const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
   for (int day = 0; day < 7; day++) {
     html += "<tr>";
     html += "<td>" + String(days[day]) + "</td>";
     for (int slot = 0; slot < 96; slot++) {
-      if (slot % 4 == 0) { // Add thicker border for full hour
-        html += "<td class='full-hour'><input type='number' size='2' name='slot" + String(day) + "_" + String(slot) + "' value='" + String(usagePattern[day][slot]) + "' min='0' max='255'></td>";
-      } else {
-        html += "<td><input type='number' size='2' name='slot" + String(day) + "_" + String(slot) + "' value='" + String(usagePattern[day][slot]) + "' min='0' max='255'></td>";
-      }
+      // Generate input fields for the usage grid
+      html += "<td><input type='number' size='2' name='slot" + String(day) + "_" + String(slot) + 
+              "' value='" + String(usagePattern[day][slot]) + "' min='0' max='255'></td>";
     }
     html += "</tr>";
   }
@@ -333,6 +359,7 @@ server.on("/grid", HTTP_GET, []() {
           </table>
           <div class="save-button-container">
             <input type="submit" value="Save">
+            <button type="button" class="reset-button" onclick="confirmReset()">Reset All</button>
           </div>
         </form>
       </div>
@@ -344,13 +371,6 @@ server.on("/grid", HTTP_GET, []() {
 });
 
 
-
-
-
-
-
-
-
 server.on("/savegrid", HTTP_POST, []() {
   bool updated = false;
 
@@ -359,14 +379,15 @@ server.on("/savegrid", HTTP_POST, []() {
       String paramName = "slot" + String(day) + "_" + String(slot);
       if (server.hasArg(paramName)) {
         int value = server.arg(paramName).toInt();
-        usagePattern[day][slot] = constrain(value, 0, 255); // Ensure within bounds
+        // Constrain the value between 0 and 255
+        usagePattern[day][slot] = constrain(value, 0, 255);
         updated = true;
       }
     }
   }
 
   if (updated) {
-    saveUsagePattern();
+    saveUsagePattern(); // Save the updated grid persistently
     server.send(200, "text/html", "<h2>Usage grid saved successfully! <a href=\"/grid\">Back</a></h2>");
   } else {
     server.send(400, "text/html", "<h2>Error: No data received. <a href=\"/grid\">Back</a></h2>");
@@ -374,16 +395,167 @@ server.on("/savegrid", HTTP_POST, []() {
 });
 
 
+server.on("/resetgrid", HTTP_POST, []() {
+  // Clear the usage pattern array
+  memset(usagePattern, 0, sizeof(usagePattern));
+
+  // Save the cleared usage pattern
+  saveUsagePattern();
+
+  // Log the reset operation
+  Serial.println("Usage grid reset to zero.");
+
+  // Respond to the client
+  server.send(200, "text/plain", "Grid reset successfully.");
+});
+
+
+server.on("/getFlowValue", HTTP_GET, []() {
+  // Prepare the response in JSON format
+  String flowData = "{";
+  flowData += "\"avgFlowValue\": " + String(smoothedFlowValue, 2) + ", ";
+  flowData += "\"peakFlowValue\": " + String(peakFlowValue);
+  flowData += "}";
+
+  // Send the response with appropriate headers
+  server.send(200, "application/json", flowData);
+});
+
+server.on("/status", HTTP_GET, []() {
+  server.send(200, "text/html", R"rawliteral(
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Status</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 20px;
+        }
+        h1 {
+          text-align: center;
+        }
+        .info-box {
+          margin: 20px auto;
+          text-align: center;
+          padding: 10px;
+          border: 1px solid #ccc;
+          width: 50%;
+        }
+      </style>
+      <script>
+        function updateFlowValue() {
+          fetch('/getFlowValue')
+            .then(response => response.json())
+            .then(data => {
+              // Update the flow values on the webpage
+              document.getElementById('avgFlowValue').innerText = data.avgFlowValue;
+              document.getElementById('peakFlowValue').innerText = data.peakFlowValue;
+            })
+            .catch(error => console.error('Error fetching flow value:', error));
+        }
+
+        function updateDateTime() {
+          fetch('/getDateTime')
+            .then(response => response.json())
+            .then(data => {
+              document.getElementById('dateTime').innerText = data.dateTime;
+            })
+            .catch(error => console.error('Error fetching date and time:', error));
+        }
+
+        function updatePumpStatus() {
+          fetch('/getPumpStatus')
+            .then(response => response.json())
+            .then(data => {
+              document.getElementById('pumpStatus').innerText = data.pumpStatus;
+            })
+            .catch(error => console.error('Error fetching pump status:', error));
+        }
+
+        function updateAll() {
+          updateFlowValue();
+          updateDateTime();
+          updatePumpStatus();
+        }
+
+        setInterval(updateAll, 1000); // Update every second
+      </script>
+    </head>
+    <body>
+      <h1>Status</h1>
+      <div class="info-box">
+        <p><strong>Current Date & Time:</strong> <span id="dateTime">Loading...</span></p>
+        <p><strong>Avg Flow Value:</strong> <span id="avgFlowValue">Loading...</span></p>
+        <p><strong>Peak Flow Value:</strong> <span id="peakFlowValue">Loading...</span></p>
+        <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
+      </div>
+    </body>
+    </html>
+  )rawliteral");
+});
+
+
+server.on("/getDateTime", HTTP_GET, []() {
+  // Get current local time
+  time_t now = time(nullptr); // Get current UTC time
+  now += utcOffsetSeconds;    // Adjust for local time
+  struct tm *localTime = gmtime(&now); // Convert to local time struct
+
+  char timeString[128];
+  strftime(timeString, sizeof(timeString), "%A, %Y-%m-%d %H:%M:%S", localTime); // Format: Day, Date, Time
+
+  // Create JSON response
+  String json = "{";
+  json += "\"dateTime\": \"" + String(timeString) + "\", ";
+  json += "\"utcOffset\": " + String(utcOffsetSeconds);
+  json += "}";
+
+  server.send(200, "application/json", json);
+});
+
+server.on("/getPumpStatus", HTTP_GET, []() {
+  // Get the current local time
+  time_t now = time(nullptr);
+  now += utcOffsetSeconds; // Adjust for local time
+  struct tm *localTime = gmtime(&now); // Convert to local time
+
+  // Format the local time
+  char timeString[64];
+  strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", localTime);
+
+  // Create JSON response
+  String json = "{";
+  json += "\"pumpStatus\": \"" + String(pumpActivated ? "Active" : "Inactive") + "\", ";
+  json += "\"localTime\": \"" + String(timeString) + "\"";
+  json += "}";
+
+  // Send the JSON response
+  server.send(200, "application/json", json);
+});
+
+
   server.begin();
 }
 
 void loop() {
+  static unsigned long lastTimeSync = 0;
+
+  // Periodically update the timezone and resync time (every 24 hours)
+  if (millis() - lastTimeSync > 86400000) { // 24 hours in milliseconds
+    fetchTimezoneOffset();
+    synchronizeTime();
+    lastTimeSync = millis();
+  }
+
   server.handleClient();
 
-  // Detect water flow and record usage
-  if (pulseCount > 0) {
-    recordUsage();
-    pulseCount = 0;
+  // Perform ADC reading and smoothing
+  readAndSmoothFlowValue();
+
+  // Check if the smoothed value exceeds the threshold
+  if (smoothedFlowValue > FLOW_SENSOR_THRESHOLD) {
+    recordUsage(); // Record usage if the smoothed value crosses the threshold
   }
 
   // Update usage patterns every 15 minutes
@@ -409,55 +581,109 @@ void startAccessPoint() {
   Serial.printf("Access Point IP: %s\n", WiFi.softAPIP().toString().c_str());
 }
 
-void synchronizeTime() {
-  configTime(timezoneOffset, 0, ntpServer);
-  Serial.println("Synchronizing time...");
-  time_t now = time(nullptr);
+void logCurrentTime() {
+  time_t now = time(nullptr); // Get the current UTC time
+  now += utcOffsetSeconds;   // Adjust for the offset
 
-  if(strlen(ssid) > 0)
-  {
-    for(int i=0; i<20; i++)
-    {
-      if (now < 100000) {
-        delay(500);
-        Serial.print(".");
-        now = time(nullptr);
-      }
-    }
-    if (now > 100000)
-    {
-      Serial.println("\nTime synchronized!");
-    }
+  struct tm *timeInfo = gmtime(&now); // Use gmtime since we already adjusted for the offset
+
+  char timeString[64];
+  strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", timeInfo);
+  Serial.printf("Local Time: %s (Offset: %d seconds)\n", timeString, utcOffsetSeconds);
+}
+
+
+void synchronizeTime() {
+  Serial.println("Synchronizing time with NTP...");
+
+  // Configure the NTP server
+  configTime(0, 0, "pool.ntp.org"); // Set NTP server
+
+  // Wait for time synchronization
+  time_t now = time(nullptr);
+  for (int i = 0; i < 20; i++) { // Wait up to 10 seconds for time sync
+    if (now > 100000) break;    // Valid time synchronized
+    delay(500);
+    now = time(nullptr);
+    Serial.print(".");
+  }
+
+  if (now > 100000) {
+    Serial.println("\nTime synchronized!");
+    logCurrentTime(); // Log the adjusted local time
+  } else {
+    Serial.println("\nFailed to synchronize time.");
   }
 }
+
 
 void fetchTimezoneOffset() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    http.begin("http://ip-api.com/json/");
+    http.begin("http://ipwhois.app/json/");
     int httpResponseCode = http.GET();
 
     if (httpResponseCode == 200) {
       String payload = http.getString();
+      Serial.println("API Response:");
+      Serial.println(payload); // Log the API response
+
       StaticJsonDocument<1024> doc;
       DeserializationError error = deserializeJson(doc, payload);
 
       if (!error) {
-        timezoneOffset = doc["offset"].as<int>();
-        String timezone = doc["timezone"].as<String>();
-        Serial.printf("Timezone: %s, Offset: %d seconds\n", timezone.c_str(), timezoneOffset);
+        int gmtOffset = doc["timezone_gmtOffset"].as<int>(); // Parse the correct field
+        int dstOffset = doc["timezone_dstOffset"].as<int>(); // Parse DST adjustment
+
+        // Combine the offsets
+        utcOffsetSeconds = gmtOffset + dstOffset;
+
+        Serial.printf("Fetched UTC Offset: %d seconds (GMT Offset: %d, DST Offset: %d)\n", 
+                      utcOffsetSeconds, gmtOffset, dstOffset);
       } else {
-        Serial.println("Failed to parse JSON");
+        Serial.println("Failed to parse JSON, keeping existing offset.");
       }
     } else {
-      Serial.printf("HTTP GET failed: %d\n", httpResponseCode);
+      Serial.printf("HTTP GET failed: %d, keeping existing offset.\n", httpResponseCode);
     }
 
     http.end();
   } else {
-    Serial.println("Wi-Fi not connected");
+    Serial.println("Wi-Fi not connected, keeping existing offset.");
   }
 }
+
+void readAndSmoothFlowValue() {
+  // Read the flow sensor value
+  int rawFlowValue = analogRead(FLOW_SENSOR_PIN);
+
+  // Update rms value
+   rmsValue += rawFlowValue;
+
+  if(rawFlowValue > peakFlowValue)
+  {
+    peakFlowValue = rawFlowValue;
+  }
+
+  // Check if it's time to update the smoothed value
+  if (millis() - lastSmoothTime >= smoothingInterval) {
+    lastSmoothTime = millis(); // Update the timestamp
+
+    if(peakFlowValue < MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE)
+    {
+      // Apply an exponential moving average to the rms value
+      smoothedFlowValue = (alpha * rmsValue) + ((1 - alpha) * smoothedFlowValue);
+    }
+
+    // Debug output
+    Serial.printf("peakValue=%d rmsValue=%d, smoothedFlowValue=%.3f\n", peakFlowValue, rmsValue, smoothedFlowValue);
+
+    // Reset the peak/rms value for the next interval
+    rmsValue = 0;
+    peakFlowValue = 0;
+  }
+}
+
 
 void saveWiFiCredentials(const String& newSSID, const String& newPassword) {
   preferences.putString("ssid", newSSID);
@@ -484,17 +710,18 @@ void recordUsage() {
     return;
   }
 
-  int currentDay = getCurrentDay();
-  int currentSlot = getCurrentTimeSlot();
-
-  // Check if the usage has already been recorded for the current slot
-  if (slotRecorded) {
-    Serial.printf("Usage already recorded for Day %d, Slot %d.\n", currentDay, currentSlot);
-    return; // Skip recording
+  if(slotRecorded)
+  {
+    return;
   }
 
-  // Mark the slot as recorded
-  slotRecorded = true;
+  // Get current local time
+  time_t now = time(nullptr);
+  now += utcOffsetSeconds;    // Adjust for local time
+  struct tm *localTime = gmtime(&now); // Convert to local time struct
+
+  int currentDay = localTime->tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
+  int currentSlot = (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
 
   // Handle day rollover for neighboring slots
   int prevDay = (currentDay == 0) ? 6 : currentDay - 1; // Previous day
@@ -507,7 +734,7 @@ void recordUsage() {
     usagePattern[currentDay][currentSlot - 1] = min(255, usagePattern[currentDay][currentSlot - 1] + IncreaseOnUsage / 2);
   }
 
-  // Add IncreaseOnUsage to the target slot
+  // Add full IncreaseOnUsage to the current slot
   usagePattern[currentDay][currentSlot] = min(255, usagePattern[currentDay][currentSlot] + IncreaseOnUsage);
 
   // Add 0.5 * IncreaseOnUsage to the next slot (or first slot of the next day)
@@ -517,9 +744,12 @@ void recordUsage() {
     usagePattern[currentDay][currentSlot + 1] = min(255, usagePattern[currentDay][currentSlot + 1] + IncreaseOnUsage / 2);
   }
 
+  // Save the updated usage pattern
   saveUsagePattern();
   Serial.printf("Usage recorded: Day %d, Slot %d, Value %d\n", currentDay, currentSlot, usagePattern[currentDay][currentSlot]);
+  slotRecorded = true;
 }
+
 
 void updateUsagePattern() {
   static int lastSlot = -1;
@@ -555,8 +785,19 @@ int getCurrentTimeSlot() {
 }
 
 bool shouldActivatePump(int day, int slot) {
-  return usagePattern[day][slot] > 0;
+  // Get current local time
+  time_t now = time(nullptr);
+  now += utcOffsetSeconds;    // Adjust for local time
+  struct tm *localTime = gmtime(&now); // Convert to local time struct
+
+  // Calculate current day and 15-minute slot in local time
+  int currentDay = localTime->tm_wday;    // Local day (0 = Sunday, ..., 6 = Saturday)
+  int currentSlot = (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
+
+  // Check if the pump should activate
+  return (day == currentDay && slot == currentSlot && usagePattern[day][slot] > 0);
 }
+
 
 void activatePump() {
   if(!pumpActivated)
@@ -584,10 +825,6 @@ void loadUsagePattern() {
   if (preferences.getBytes("usagePattern", usagePattern, sizeof(usagePattern)) == 0) {
     memset(usagePattern, 0, sizeof(usagePattern));
   }
-}
-
-void IRAM_ATTR flowPulse() {
-  pulseCount++;
 }
 
 void generateVisualizationPage() {
