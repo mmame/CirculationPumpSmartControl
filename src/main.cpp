@@ -32,14 +32,13 @@ void readAndSmoothFlowValue();
 int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
 bool slotRecorded = false; // Tracks if usage has been recorded for the current slot
-const int FLOW_SENSOR_THRESHOLD = 600;    // Threshold for detecting flow
+const int FLOW_SENSOR_THRESHOLD = 30000;    // Threshold for detecting flow
 const int MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE = 2000; 
-float smoothedFlowValue = 0;   // Smoothed flow value
 int peakFlowValue = 0;
 u_int32_t rmsValue = 0;             // sum value detected within the current interval
+u_int32_t lastRmsValue = 0;             // sum value detected within the current interval
 unsigned long lastSmoothTime = 0; // Timestamp for the last smoothing operation
-const unsigned long smoothingInterval = 2000; // Smoothing interval in milliseconds
-const float alpha = 0.1;        // Smoothing factor (adjust for desired smoothness)
+const unsigned long smoothingInterval = 10000; // Smoothing interval in milliseconds
 
 // Webserver
 WebServer server(80);
@@ -57,8 +56,6 @@ const char* ntpServer = "pool.ntp.org";
 // GPIO Pins
 #define FLOW_SENSOR_PIN 34
 #define PUMP_RELAY_PIN 27
-
-#define FLOW_SENSOR_THRESHOLD 1000
 
 // Usage pattern (7 days x 96 slots for 15-minute intervals)
 int usagePattern[7][96] = {0};
@@ -413,7 +410,7 @@ server.on("/resetgrid", HTTP_POST, []() {
 server.on("/getFlowValue", HTTP_GET, []() {
   // Prepare the response in JSON format
   String flowData = "{";
-  flowData += "\"avgFlowValue\": " + String(smoothedFlowValue, 2) + ", ";
+  flowData += "\"lastRmsValue\": " + String(lastRmsValue) + ", ";
   flowData += "\"peakFlowValue\": " + String(peakFlowValue);
   flowData += "}";
 
@@ -449,8 +446,8 @@ server.on("/status", HTTP_GET, []() {
             .then(response => response.json())
             .then(data => {
               // Update the flow values on the webpage
-              document.getElementById('avgFlowValue').innerText = data.avgFlowValue;
               document.getElementById('peakFlowValue').innerText = data.peakFlowValue;
+              document.getElementById('lastRmsValue').innerText = data.lastRmsValue;
             })
             .catch(error => console.error('Error fetching flow value:', error));
         }
@@ -486,8 +483,8 @@ server.on("/status", HTTP_GET, []() {
       <h1>Status</h1>
       <div class="info-box">
         <p><strong>Current Date & Time:</strong> <span id="dateTime">Loading...</span></p>
-        <p><strong>Avg Flow Value:</strong> <span id="avgFlowValue">Loading...</span></p>
         <p><strong>Peak Flow Value:</strong> <span id="peakFlowValue">Loading...</span></p>
+        <p><strong>Last sum RMS Value:</strong> <span id="lastRmsValue">Loading...</span></p>
         <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
       </div>
     </body>
@@ -554,7 +551,7 @@ void loop() {
   readAndSmoothFlowValue();
 
   // Check if the smoothed value exceeds the threshold
-  if (smoothedFlowValue > FLOW_SENSOR_THRESHOLD) {
+  if (lastRmsValue > FLOW_SENSOR_THRESHOLD) {
     recordUsage(); // Record usage if the smoothed value crosses the threshold
   }
 
@@ -658,7 +655,7 @@ void readAndSmoothFlowValue() {
   int rawFlowValue = analogRead(FLOW_SENSOR_PIN);
 
   // Update rms value
-   rmsValue += rawFlowValue;
+  rmsValue += rawFlowValue;
 
   if(rawFlowValue > peakFlowValue)
   {
@@ -672,11 +669,8 @@ void readAndSmoothFlowValue() {
     if(peakFlowValue < MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE)
     {
       // Apply an exponential moving average to the rms value
-      smoothedFlowValue = (alpha * rmsValue) + ((1 - alpha) * smoothedFlowValue);
+      lastRmsValue = rmsValue;
     }
-
-    // Debug output
-    Serial.printf("peakValue=%d rmsValue=%d, smoothedFlowValue=%.3f\n", peakFlowValue, rmsValue, smoothedFlowValue);
 
     // Reset the peak/rms value for the next interval
     rmsValue = 0;
@@ -773,29 +767,25 @@ void updateUsagePattern() {
 }
 
 int getCurrentDay() {
-  time_t now = time(nullptr);
-  struct tm* timeInfo = localtime(&now);
-  return timeInfo->tm_wday; // 0=Sunday, 1=Monday, ..., 6=Saturday
-}
-
-int getCurrentTimeSlot() {
-  time_t now = time(nullptr);
-  struct tm* timeInfo = localtime(&now);
-  return (timeInfo->tm_hour * 4) + (timeInfo->tm_min / 15);
-}
-
-bool shouldActivatePump(int day, int slot) {
   // Get current local time
   time_t now = time(nullptr);
   now += utcOffsetSeconds;    // Adjust for local time
   struct tm *localTime = gmtime(&now); // Convert to local time struct
 
-  // Calculate current day and 15-minute slot in local time
-  int currentDay = localTime->tm_wday;    // Local day (0 = Sunday, ..., 6 = Saturday)
-  int currentSlot = (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
+  return localTime->tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
+  }
 
-  // Check if the pump should activate
-  return (day == currentDay && slot == currentSlot && usagePattern[day][slot] > 0);
+int getCurrentTimeSlot() {
+  // Get current local time
+  time_t now = time(nullptr);
+  now += utcOffsetSeconds;    // Adjust for local time
+  struct tm *localTime = gmtime(&now); // Convert to local time struct
+  
+  return (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
+  }
+
+bool shouldActivatePump(int day, int slot) {
+  return (usagePattern[day][slot] > 0);
 }
 
 
