@@ -30,6 +30,9 @@ void loadUsagePattern();
 void generateVisualizationPage();
 void setupOTA();
 void temperatureMeasurement();
+String getUptime();
+
+
 bool isOtaUpdating = false;  // Flag to track OTA updates
 
 
@@ -257,6 +260,12 @@ server.on("/resetconfig", HTTP_POST, []() {
       </body>
       </html>
     )rawliteral");
+  });
+
+  server.on("/restart", HTTP_POST, []() {
+      server.send(200, "text/plain", "Restarting...");
+      delay(1000);
+      ESP.restart();
   });
 
   server.on("/visualize", HTTP_GET, generateVisualizationPage);
@@ -566,11 +575,28 @@ server.on("/status", HTTP_GET, []() {
             .catch(error => console.error('Error fetching pump status:', error));
         }
 
+        function updateUptime() {
+            fetch('/getuptime')
+                .then(response => response.text())
+                .then(text => document.getElementById('uptime').innerText = text)
+                .catch(error => console.error('Error fetching uptime:', error));
+        }        
+
         function updateAll() {
           updateTempValue();
           updateDateTime();
           updatePumpStatus();
+          updateUptime();
         }
+
+        function restartESP() {
+            if (confirm('Are you sure you want to restart the device?')) {
+                fetch('/restart', { method: 'POST' })
+                    .then(response => response.text())
+                    .then(text => alert(text))
+                    .catch(error => alert('Restart failed: ' + error));
+            }
+        }        
 
         setInterval(updateAll, 3000); // Update every x seconds
       </script>
@@ -579,15 +605,21 @@ server.on("/status", HTTP_GET, []() {
       <h1>Status</h1>
       <div class="info-box">
         <p><strong>Current Date & Time:</strong> <span id="dateTime">Loading...</span></p>
+        <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
         <p><strong>Previous Temperature:</strong> <span id="initialAvgTemp">Loading...</span></p>
         <p><strong>Current Temperature:</strong> <span id="currentAvgTemp">Loading...</span></p>
         <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
+        <p><button onclick="restartESP()">Restart</button></p>
       </div>
     </body>
     </html>
   )rawliteral");
 });
 
+
+server.on("/getuptime", HTTP_GET, []() {
+    server.send(200, "text/plain", getUptime());
+});
 
 server.on("/getDateTime", HTTP_GET, []() {
   // Get current local time
@@ -1004,6 +1036,22 @@ void generateVisualizationPage() {
   )rawliteral";
 
   server.send(200, "text/html", html);
+}
+
+String getUptime() {
+    unsigned long millisecs = millis();
+    unsigned long seconds = millisecs / 1000;
+    unsigned long minutes = seconds / 60;
+    unsigned long hours = minutes / 60;
+    unsigned long days = hours / 24;
+
+    seconds %= 60;
+    minutes %= 60;
+    hours %= 24;
+
+    char uptimeStr[50];
+    snprintf(uptimeStr, sizeof(uptimeStr), "%lu days, %02lu:%02lu:%02lu", days, hours, minutes, seconds);
+    return String(uptimeStr);
 }
 
 
