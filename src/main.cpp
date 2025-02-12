@@ -6,6 +6,8 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <time.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
 
 #define IncreaseOnUsage 6
 #define DecreaseWhenNoUsage 1
@@ -27,18 +29,13 @@ void saveUsagePattern();
 void loadUsagePattern();
 void generateVisualizationPage();
 void setupOTA();
-void readAndSmoothFlowValue();
+void temperatureMeasurement();
+bool isOtaUpdating = false;  // Flag to track OTA updates
+
 
 int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
 bool slotRecorded = false; // Tracks if usage has been recorded for the current slot
-const int FLOW_SENSOR_THRESHOLD = 30000;    // Threshold for detecting flow
-const int MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE = 2000; 
-int peakFlowValue = 0;
-u_int32_t rmsValue = 0;             // sum value detected within the current interval
-u_int32_t lastRmsValue = 0;             // sum value detected within the current interval
-unsigned long lastSmoothTime = 0; // Timestamp for the last smoothing operation
-const unsigned long smoothingInterval = 10000; // Smoothing interval in milliseconds
 
 // Webserver
 WebServer server(80);
@@ -54,8 +51,29 @@ char password[64] = "";  // Mutable array to hold the WiFi password
 const char* ntpServer = "pool.ntp.org";
 
 // GPIO Pins
-#define FLOW_SENSOR_PIN 34
 #define PUMP_RELAY_PIN 27
+#define ONE_WIRE_BUS 32  // GPIO for DS18B20 sensor
+
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+#define MeasureDurationDefault 5000
+#define SleepDurationDefault 20000
+#define TempChangeThresholdDefault 1.2
+
+// Temperature tracking variables
+float sumTemp = 0;
+int numReadings = 0;
+float threshold = TempChangeThresholdDefault; // Temp drop threshold for detection
+float initialAvgTemp = 0; // Baseline temp for comparison
+float currentAvgTemp = 0;
+
+// Timing
+unsigned long measureDuration = MeasureDurationDefault;  // Measurement duration
+unsigned long sleepDuration = SleepDurationDefault;    // Pause between measurements
+unsigned long cycleStartTime = 0;
+bool measuring = false;
+bool sleepPhase = false;
 
 // Usage pattern (7 days x 96 slots for 15-minute intervals)
 int usagePattern[7][96] = {0};
@@ -74,10 +92,12 @@ void setup() {
   // Initialize Preferences
   preferences.begin("water-usage", false);
 
-  // Set the ADC attenuation to 0dB for 0–1.1V range
-  analogSetPinAttenuation(FLOW_SENSOR_PIN, ADC_0db);
+    // Load stored settings (or use defaults if not found)
+    threshold = preferences.getFloat("threshold", TempChangeThresholdDefault);
+    measureDuration = preferences.getUInt("measureDuration", MeasureDurationDefault);
+    sleepDuration = preferences.getUInt("sleepDuration", SleepDurationDefault);
 
-  // Load Wi-Fi credentials
+    // Load Wi-Fi credentials
   loadWiFiCredentials();
 
   // Connect to Wi-Fi
@@ -109,16 +129,22 @@ void setup() {
 
   // Set up OTA updates
   setupOTA();
-
-  // Set up flow sensor
-  pinMode(FLOW_SENSOR_PIN, INPUT);
-  
+ 
   // Set up pump relay
   pinMode(PUMP_RELAY_PIN, OUTPUT);
   digitalWrite(PUMP_RELAY_PIN, LOW);
 
   // Load usage patterns
   loadUsagePattern();
+
+  sensors.begin();
+  sensors.setResolution(11); 
+  sensors.setWaitForConversion(false);  // Non-blocking Modus aktivieren
+
+  // Start first measurement
+  sensors.requestTemperatures();
+  measuring = true;
+  cycleStartTime = millis();
 
   // Set up web server endpoints
 server.on("/", HTTP_GET, []() {
@@ -134,12 +160,82 @@ server.on("/", HTTP_GET, []() {
         <li><a href="/status">Status</a></li> 
         <li><a href="/visualize">View Usage Data</a></li>
         <li><a href="/grid">Edit Usage Grid</a></li>
+        <li><a href="/config">Configuration</a></li>
         <li><a href="/wificonfig">WiFi Configuration</a></li>
         <li><a href="/update">Over-the-Air (OTA) Update</a></li>
       </ul>
     </body>
     </html>
   )rawliteral");
+});
+
+server.on("/config", HTTP_GET, []() {
+    String html = "<!DOCTYPE html><html><head>"
+                  "<title>Temperature Detection Configuration</title>"
+                  "<style>"
+                  "body { font-family: Arial, sans-serif; margin: 20px; }"
+                  "form { max-width: 400px; margin: auto; }"
+                  "label { display: block; margin-top: 10px; }"
+                  "input { width: 100%; padding: 5px; margin-top: 5px; }"
+                  ".button-container { text-align: center; margin-top: 20px; }"
+                  ".reset-button { background-color: red; color: white; border: none; padding: 10px; cursor: pointer; }"
+                  ".reset-button:hover { background-color: darkred; }"
+                  "</style>"
+                  "<script>"
+                  "function resetConfig() {"
+                  " fetch('/resetconfig', { method: 'POST' }).then(() => location.reload());"
+                  "}"
+                  "</script>"
+                  "</head><body>"
+                  "<h2>Temperature Sensor Configuration</h2>"
+                  "<form action='/saveconfig' method='POST'>"
+                  
+                  "<label for='threshold'>Temperature Drop Threshold (&deg;C):</label>"
+                  "<input type='number' step='0.1' id='threshold' name='threshold' value='" + String(threshold) + "' min='0' max='10'>"
+
+                  "<label for='measureDuration'>Measurement Duration (ms):</label>"
+                  "<input type='number' id='measureDuration' name='measureDuration' value='" + String(measureDuration) + "' min='1000' max='20000'>"
+
+                  "<label for='sleepDuration'>Sleep Duration (ms):</label>"
+                  "<input type='number' id='sleepDuration' name='sleepDuration' value='" + String(sleepDuration) + "' min='1000' max='100000'>"
+
+                  "<div class='button-container'>"
+                  "<input type='submit' value='Save'>"
+                  "<button type='button' class='reset-button' onclick='resetConfig()'>Reset to Defaults</button>"
+                  "</div>"
+                  "</form><br><a href='/'>Back to Home</a></body></html>";
+
+    server.send(200, "text/html", html);
+});
+
+
+server.on("/saveconfig", HTTP_POST, []() {
+    if (server.hasArg("threshold")) {
+        threshold = server.arg("threshold").toFloat();
+        preferences.putFloat("threshold", threshold);
+    }
+    if (server.hasArg("measureDuration")) {
+        measureDuration = server.arg("measureDuration").toInt();
+        preferences.putUInt("measureDuration", measureDuration);
+    }
+    if (server.hasArg("sleepDuration")) {
+        sleepDuration = server.arg("sleepDuration").toInt();
+        preferences.putUInt("sleepDuration", sleepDuration);
+    }
+    server.send(200, "text/html", "<h2>Configuration Saved! <a href='/config'>Back</a></h2>");
+});
+
+
+server.on("/resetconfig", HTTP_POST, []() {
+    threshold = TempChangeThresholdDefault;
+    measureDuration = MeasureDurationDefault;
+    sleepDuration = SleepDurationDefault;
+
+    preferences.putFloat("threshold", threshold);
+    preferences.putUInt("measureDuration", measureDuration);
+    preferences.putUInt("sleepDuration", sleepDuration);
+
+    server.send(200, "text/plain", "Configuration reset to default values.");
 });
 
 
@@ -407,15 +503,15 @@ server.on("/resetgrid", HTTP_POST, []() {
 });
 
 
-server.on("/getFlowValue", HTTP_GET, []() {
+server.on("/getTempValue", HTTP_GET, []() {
   // Prepare the response in JSON format
-  String flowData = "{";
-  flowData += "\"lastRmsValue\": " + String(lastRmsValue) + ", ";
-  flowData += "\"peakFlowValue\": " + String(peakFlowValue);
-  flowData += "}";
+  String temperatureData = "{";
+  temperatureData += "\"initialAvgTemp\": " + String(initialAvgTemp) + ", ";
+  temperatureData += "\"currentAvgTemp\": " + String(currentAvgTemp);
+  temperatureData += "}";
 
   // Send the response with appropriate headers
-  server.send(200, "application/json", flowData);
+  server.send(200, "application/json", temperatureData);
 });
 
 server.on("/status", HTTP_GET, []() {
@@ -441,15 +537,15 @@ server.on("/status", HTTP_GET, []() {
         }
       </style>
       <script>
-        function updateFlowValue() {
-          fetch('/getFlowValue')
+        function updateTempValue() {
+          fetch('/getTempValue')
             .then(response => response.json())
             .then(data => {
-              // Update the flow values on the webpage
-              document.getElementById('peakFlowValue').innerText = data.peakFlowValue;
-              document.getElementById('lastRmsValue').innerText = data.lastRmsValue;
+              // Update the temp values on the webpage
+              document.getElementById('initialAvgTemp').innerText = data.initialAvgTemp;
+              document.getElementById('currentAvgTemp').innerText = data.currentAvgTemp;
             })
-            .catch(error => console.error('Error fetching flow value:', error));
+            .catch(error => console.error('Error fetching temp value:', error));
         }
 
         function updateDateTime() {
@@ -471,20 +567,20 @@ server.on("/status", HTTP_GET, []() {
         }
 
         function updateAll() {
-          updateFlowValue();
+          updateTempValue();
           updateDateTime();
           updatePumpStatus();
         }
 
-        setInterval(updateAll, 1000); // Update every second
+        setInterval(updateAll, 3000); // Update every x seconds
       </script>
     </head>
     <body>
       <h1>Status</h1>
       <div class="info-box">
         <p><strong>Current Date & Time:</strong> <span id="dateTime">Loading...</span></p>
-        <p><strong>Peak Flow Value:</strong> <span id="peakFlowValue">Loading...</span></p>
-        <p><strong>Last sum RMS Value:</strong> <span id="lastRmsValue">Loading...</span></p>
+        <p><strong>Previous Temperature:</strong> <span id="initialAvgTemp">Loading...</span></p>
+        <p><strong>Current Temperature:</strong> <span id="currentAvgTemp">Loading...</span></p>
         <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
       </div>
     </body>
@@ -538,6 +634,12 @@ server.on("/getPumpStatus", HTTP_GET, []() {
 void loop() {
   static unsigned long lastTimeSync = 0;
 
+  ArduinoOTA.handle();
+
+  if (isOtaUpdating) {
+      return;  // Skip the rest of the loop
+  }
+
   // Periodically update the timezone and resync time (every 24 hours)
   if (millis() - lastTimeSync > 86400000) { // 24 hours in milliseconds
     fetchTimezoneOffset();
@@ -547,13 +649,7 @@ void loop() {
 
   server.handleClient();
 
-  // Perform ADC reading and smoothing
-  readAndSmoothFlowValue();
-
-  // Check if the smoothed value exceeds the threshold
-  if (lastRmsValue > FLOW_SENSOR_THRESHOLD) {
-    recordUsage(); // Record usage if the smoothed value crosses the threshold
-  }
+  temperatureMeasurement();
 
   // Update usage patterns every 15 minutes
   if (millis() - lastSampleTime > sampleInterval) {
@@ -569,8 +665,69 @@ void loop() {
   } else {
     deactivatePump();
   }
+}
 
-  ArduinoOTA.handle();
+void temperatureMeasurement()
+{
+    unsigned long currentMillis = millis();
+
+    if (!sleepPhase) {
+        if (measuring && sensors.isConversionComplete()) {
+            measuring = false;
+            float currentTemp = sensors.getTempCByIndex(0);
+
+            sumTemp += currentTemp;
+            numReadings++;
+
+            Serial.print("Measured Temperature: ");
+            Serial.print(currentTemp);
+            Serial.println(" °C");
+
+            // Start next async measurement
+            sensors.requestTemperatures();
+            measuring = true;
+
+            // End measurement window
+            if (currentMillis - cycleStartTime >= measureDuration) {
+                if(numReadings > 0)
+                {
+                  currentAvgTemp = sumTemp / numReadings;
+                  float deltaT = currentAvgTemp - initialAvgTemp;
+
+                  Serial.print("Average Temp: ");
+                  Serial.print(currentAvgTemp);
+                  Serial.println(" °C");
+
+                  Serial.print("ΔT: ");
+                  Serial.print(deltaT);
+                  Serial.println(" °C");
+
+                  if (deltaT <= -threshold) {
+                      Serial.println(">>> Hot water usage detected! <<<");
+                      recordUsage();  // Trigger logging & pump activation
+                  }
+                }
+
+                sleepPhase = true;
+                cycleStartTime = millis();
+            }
+        }
+    } else {
+        if (currentMillis - cycleStartTime >= sleepDuration) {
+            sleepPhase = false;
+            cycleStartTime = millis();
+
+            initialAvgTemp = (currentAvgTemp > 0) ? currentAvgTemp : initialAvgTemp;
+
+            sumTemp = 0;
+            numReadings = 0;
+
+            sensors.requestTemperatures();
+            measuring = true;
+
+            Serial.println(">>> Starting new measurement cycle...");
+        }
+    }  
 }
 
 void startAccessPoint() {
@@ -649,35 +806,6 @@ void fetchTimezoneOffset() {
     Serial.println("Wi-Fi not connected, keeping existing offset.");
   }
 }
-
-void readAndSmoothFlowValue() {
-  // Read the flow sensor value
-  int rawFlowValue = analogRead(FLOW_SENSOR_PIN);
-
-  // Update rms value
-  rmsValue += rawFlowValue;
-
-  if(rawFlowValue > peakFlowValue)
-  {
-    peakFlowValue = rawFlowValue;
-  }
-
-  // Check if it's time to update the smoothed value
-  if (millis() - lastSmoothTime >= smoothingInterval) {
-    lastSmoothTime = millis(); // Update the timestamp
-
-    if(peakFlowValue < MAX_ALLOWED_PEAK_BUMP_SUPPRESSION_VALUE)
-    {
-      // Apply an exponential moving average to the rms value
-      lastRmsValue = rmsValue;
-    }
-
-    // Reset the peak/rms value for the next interval
-    rmsValue = 0;
-    peakFlowValue = 0;
-  }
-}
-
 
 void saveWiFiCredentials(const String& newSSID, const String& newPassword) {
   preferences.putString("ssid", newSSID);
@@ -880,39 +1008,30 @@ void generateVisualizationPage() {
 
 
 void setupOTA() {
-  ArduinoOTA.onStart([]() {
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH) {
-      type = "sketch";
-    } else { // U_SPIFFS
-      type = "filesystem";
-    }
-    Serial.println("Start updating " + type);
-  });
+    ArduinoOTA.onStart([]() {
+        Serial.println("OTA Update Started...");
+        isOtaUpdating = true;  // Suspend other web activities
+    });
 
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
-  });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("OTA Update Finished!");
+        isOtaUpdating = false; // Resume normal operation
+    });
 
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\n", (progress / (total / 100)));
-  });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("OTA Progress: %u%%\n", (progress / (total / 100)));
+    });
 
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) {
-      Serial.println("Auth Failed");
-    } else if (error == OTA_BEGIN_ERROR) {
-      Serial.println("Begin Failed");
-    } else if (error == OTA_CONNECT_ERROR) {
-      Serial.println("Connect Failed");
-    } else if (error == OTA_RECEIVE_ERROR) {
-      Serial.println("Receive Failed");
-    } else if (error == OTA_END_ERROR) {
-      Serial.println("End Failed");
-    }
-  });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("OTA Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+        isOtaUpdating = false;  // Resume operation after failure
+    });
 
-  ArduinoOTA.begin();
-  Serial.println("OTA ready");
+    ArduinoOTA.begin();
+    Serial.println("OTA Ready");
 }
