@@ -907,23 +907,34 @@ void recordUsage() {
 
 void updateUsagePattern() {
   static int lastSlot = -1;
+  static int lastDay = -1;
 
   int currentSlot = getCurrentTimeSlot();
-  if (currentSlot != lastSlot) {
-    // Reset the flag when the timeslot changes
+  int currentDay = getCurrentDay();
+
+  if (currentSlot != lastSlot) {  // Timeslot changed
+    if (lastSlot != -1 && !slotRecorded) {  // If last slot exists and no usage was recorded
+      int targetDay = lastDay;  // Default: Decrement the previous slot of the same day
+      int targetSlot = lastSlot;
+
+      // Handle day overflow (previous slot was 95, new slot is 0 → move to the previous day)
+      if (currentSlot == 0) {
+        targetDay = (currentDay == 0) ? 6 : currentDay - 1;  // Wrap to previous day (Sunday → Saturday)
+        targetSlot = 95;  // Last slot of the previous day
+      }
+
+      usagePattern[targetDay][targetSlot] = max(0, usagePattern[targetDay][targetSlot] - DecreaseWhenNoUsage);
+      Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count.\n", targetSlot, targetDay);
+    }
+
+    // Reset for the new timeslot
     slotRecorded = false;
     lastSlot = currentSlot;
-    Serial.printf("New timeslot detected: Slot %d\n", currentSlot);
+    lastDay = currentDay;
+    Serial.printf("New timeslot detected: Slot %d on Day %d\n", currentSlot, currentDay);
   }
 
-  // Decrease the counter for non-usage
-  for (int day = 0; day < 7; day++) {
-    for (int slot = 0; slot < 96; slot++) {
-      usagePattern[day][slot] = max(0, usagePattern[day][slot] - DecreaseWhenNoUsage);
-    }
-  }
   saveUsagePattern();
-  Serial.println("Usage pattern updated (decremented).");
 }
 
 int getCurrentDay() {
