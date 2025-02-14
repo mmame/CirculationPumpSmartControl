@@ -1050,21 +1050,35 @@ void generateVisualizationPage() {
 }
 
 String getUptime() {
-    unsigned long millisecs = millis();
-    unsigned long seconds = millisecs / 1000;
-    unsigned long minutes = seconds / 60;
-    unsigned long hours = minutes / 60;
-    unsigned long days = hours / 24;
+  static unsigned long prevMillis = 0;    // Last recorded millis value
+  static unsigned int overflowCount = 0;  // Counts how many times millis() has overflowed
 
-    seconds %= 60;
-    minutes %= 60;
-    hours %= 24;
+  unsigned long currentMillis = millis();
 
-    char uptimeStr[50];
-    snprintf(uptimeStr, sizeof(uptimeStr), "%lu days, %02lu:%02lu:%02lu", days, hours, minutes, seconds);
-    return String(uptimeStr);
+  // Detect millis() overflow (rollover)
+  if (currentMillis < prevMillis) {  
+      overflowCount++;  // Increment overflow count
+  }
+  prevMillis = currentMillis;  // Update last recorded value
+
+  // Calculate total elapsed time including overflowed periods
+  uint64_t totalMillis = (uint64_t(overflowCount) * 4294967296ULL) + currentMillis;
+
+  // Convert to human-readable format
+  unsigned long seconds = totalMillis / 1000;
+  unsigned long minutes = seconds / 60;
+  unsigned long hours = minutes / 60;
+  unsigned long days = hours / 24;
+
+  seconds %= 60;
+  minutes %= 60;
+  hours %= 24;
+
+  // Format uptime string
+  char uptimeStr[50];
+  snprintf(uptimeStr, sizeof(uptimeStr), "%lu days, %02lu:%02lu:%02lu", days, hours, minutes, seconds);
+  return String(uptimeStr);
 }
-
 
 void setupOTA() {
     ArduinoOTA.onStart([]() {
