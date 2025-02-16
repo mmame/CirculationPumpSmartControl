@@ -8,6 +8,11 @@
 #include <time.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <ESPmDNS.h>
+
+#define MDNS_NAME "pump"
 
 #define IncreaseOnUsage 6
 #define DecreaseWhenNoUsage 1
@@ -31,10 +36,11 @@ void generateVisualizationPage();
 void setupOTA();
 void temperatureMeasurement();
 String getUptime();
-
+String getCurrentDateTime();
 
 bool isOtaUpdating = false;  // Flag to track OTA updates
 
+RTC_PCF8563 rtc;
 
 int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
@@ -61,8 +67,8 @@ OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 
 #define MeasureDurationDefault 5000
-#define SleepDurationDefault 20000
-#define TempChangeThresholdDefault 1.2
+#define SleepDurationDefault 25000
+#define TempChangeThresholdDefault 2.0
 
 // Temperature tracking variables
 float sumTemp = 0;
@@ -70,6 +76,7 @@ int numReadings = 0;
 float threshold = TempChangeThresholdDefault; // Temp drop threshold for detection
 float initialAvgTemp = 0; // Baseline temp for comparison
 float currentAvgTemp = 0;
+float deltaT = 0;
 
 // Timing
 unsigned long measureDuration = MeasureDurationDefault;  // Measurement duration
@@ -91,6 +98,19 @@ const int endOffset = 5;    // Stop 5 minutes after the recorded time
 
 void setup() {
   Serial.begin(115200);
+
+  Wire.begin();
+    
+  if (!rtc.begin()) {
+      Serial.println("Couldn't find RTC");
+  } else {
+      Serial.println("RTC found.");
+  }
+
+  if (rtc.lostPower()) {
+    Serial.println("RTC not initialized, setting default time...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));  // Set RTC to compile-time
+  }  
 
   // Initialize Preferences
   preferences.begin("water-usage", false);
@@ -165,6 +185,7 @@ server.on("/", HTTP_GET, []() {
         <li><a href="/grid">Edit Usage Grid</a></li>
         <li><a href="/config">Configuration</a></li>
         <li><a href="/wificonfig">WiFi Configuration</a></li>
+        <li><a href="/timeconfig">Manually set Time/Date</a></li>
         <li><a href="/update">Over-the-Air (OTA) Update</a></li>
       </ul>
     </body>
@@ -242,6 +263,87 @@ server.on("/resetconfig", HTTP_POST, []() {
 });
 
 
+server.on("/timeconfig", HTTP_GET, []() {
+  String html = R"rawliteral(
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <title>Set RTC Time</title>
+          <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              form { max-width: 300px; margin: auto; }
+              label { display: block; margin-top: 10px; }
+              input { width: 100%; padding: 5px; margin-top: 5px; }
+              .button-container { text-align: center; margin-top: 20px; }
+          </style>
+          <script>
+              function setToBrowserTime() {
+                  let now = new Date();
+                  document.getElementById('year').value = now.getFullYear();
+                  document.getElementById('month').value = now.getMonth() + 1; // Month is 0-based
+                  document.getElementById('day').value = now.getDate();
+                  document.getElementById('hour').value = now.getHours();
+                  document.getElementById('minute').value = now.getMinutes();
+                  document.getElementById('second').value = now.getSeconds();
+              }
+          </script>
+      </head>
+      <body>
+          <h2>Set RTC Time</h2>
+          <form action="/settime" method="POST">
+              <label for="year">Year:</label>
+              <input type="number" id="year" name="year" min="2020" max="2099" required>
+
+              <label for="month">Month:</label>
+              <input type="number" id="month" name="month" min="1" max="12" required>
+
+              <label for="day">Day:</label>
+              <input type="number" id="day" name="day" min="1" max="31" required>
+
+              <label for="hour">Hour:</label>
+              <input type="number" id="hour" name="hour" min="0" max="23" required>
+
+              <label for="minute">Minute:</label>
+              <input type="number" id="minute" name="minute" min="0" max="59" required>
+
+              <label for="second">Second:</label>
+              <input type="number" id="second" name="second" min="0" max="59" required>
+
+              <div class="button-container">
+                  <input type="submit" value="Set Time">
+                  <button type="button" onclick="setToBrowserTime()">Use Browser Time</button>
+              </div>
+          </form>
+          <br>
+          <a href="/">Back to Home</a>
+      </body>
+      </html>
+  )rawliteral";
+
+  server.send(200, "text/html", html);
+});
+
+
+
+server.on("/settime", HTTP_POST, []() {
+  if (server.hasArg("year") && server.hasArg("month") && server.hasArg("day") &&
+      server.hasArg("hour") && server.hasArg("minute") && server.hasArg("second")) {
+
+      int year = server.arg("year").toInt();
+      int month = server.arg("month").toInt();
+      int day = server.arg("day").toInt();
+      int hour = server.arg("hour").toInt();
+      int minute = server.arg("minute").toInt();
+      int second = server.arg("second").toInt();
+
+      rtc.adjust(DateTime(year, month, day, hour, minute, second));
+      server.send(200, "text/html", "<h2>RTC Time Updated! <a href='/'>Back</a></h2>");
+  } else {
+      server.send(400, "text/html", "<h2>Invalid Input. <a href='/settime'>Back</a></h2>");
+  }
+});
+
+
   server.on("/wificonfig", HTTP_GET, []() {
     server.send(200, "text/html", R"rawliteral(
       <!DOCTYPE html>
@@ -256,7 +358,7 @@ server.on("/resetconfig", HTTP_POST, []() {
           <input type="submit" value="Save">
         </form>
         <br>
-        <a href="/visualize">View Usage Data</a>
+        <a href='/'>Back to Home</a>
       </body>
       </html>
     )rawliteral");
@@ -295,6 +397,8 @@ server.on("/update", HTTP_GET, []() {
         <input type="file" name="firmware"><br><br>
         <input type="submit" value="Upload and Update">
       </form>
+      <br>
+      <a href='/'>Back to Home</a>
     </body>
     </html>
   )rawliteral");
@@ -326,151 +430,174 @@ server.on("/update", HTTP_POST, []() {
 });
 
 server.on("/grid", HTTP_GET, []() {
-  String html = R"rawliteral(
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <style>
-        .table-container {
-          display: block;
-          overflow-x: auto;
-          white-space: nowrap;
-          position: relative;
-          padding: 10px;
-          margin-left: auto;
-          margin-right: auto;
-        }
-        table {
-          font-family: Arial, sans-serif;
-          border-collapse: collapse;
-          margin: 0 auto;
-          width: max-content;
-        }
-        td, th {
-          border: 1px solid #dddddd;
-          text-align: center;
-          padding: 4px;
-        }
-        tr:nth-child(even) {
-          background-color: #f9f9f9;
-        }
-        input {
-          width: 30px;
-          text-align: center;
-        }
-        .save-button-container {
-          text-align: center;
-          margin-top: 20px;
-          display: flex;
-          justify-content: center;
-          gap: 15px; /* Space between buttons */
-        }
-        .save-button-container input,
-        .save-button-container button {
-          font-size: 16px;
-          padding: 10px 20px; /* Proper padding for both buttons */
-          width: auto;
-          height: 50px; /* Ensure both buttons are the same height */
-          box-sizing: border-box; /* Ensure padding is included in the height */
-        }
-        .reset-button {
-          color: white;
-          background-color: red;
-          border: none;
-          cursor: pointer;
-        }
-        .reset-button:hover {
-          background-color: darkred;
-        }
-      </style>
-      <script>
-        function highlightNonZeroValues() {
-          const inputs = document.querySelectorAll('input[type="number"]');
-          inputs.forEach(input => {
-            if (parseInt(input.value) > 0) {
-              input.style.backgroundColor = 'yellow';
-            } else {
-              input.style.backgroundColor = '';
-            }
-          });
-        }
-
-        function confirmReset() {
-          if (confirm('Are you sure you want to reset the entire grid? This action cannot be undone!')) {
-            fetch('/resetgrid', { method: 'POST' })
-              .then(response => {
-                if (response.ok) {
-                  // Reset successful: Clear inputs in the browser
-                  const inputs = document.querySelectorAll('input[type="number"]');
-                  inputs.forEach(input => {
-                    input.value = 0;
-                    input.style.backgroundColor = ''; // Clear yellow highlight
-                  });
-                  alert('Grid reset successfully!');
-                } else {
-                  throw new Error('Failed to reset grid.');
-                }
-              })
-              .catch(error => {
-                alert('Error resetting the grid: ' + error);
+  server.send(200, "text/html", R"rawliteral(
+      <!DOCTYPE html>
+      <html>
+      <head>
+          <style>
+              .table-container {
+                  display: block;
+                  overflow-x: auto;
+                  white-space: nowrap;
+                  position: relative;
+                  padding: 10px;
+                  margin-left: auto;
+                  margin-right: auto;
+              }
+              table {
+                  font-family: Arial, sans-serif;
+                  border-collapse: collapse;
+                  margin: 0 auto;
+                  width: max-content;
+              }
+              td, th {
+                  border: 1px solid #dddddd;
+                  text-align: center;
+                  padding: 4px;
+              }
+              th.full-hour, td.full-hour {
+                  border-left: 3px solid black !important; /* Thicker border for full hours */
+              }
+              tr:nth-child(even) {
+                  background-color: #f9f9f9;
+              }
+              input {
+                  width: 30px;
+                  text-align: center;
+              }
+              .save-button-container {
+                  text-align: center;
+                  margin-top: 20px;
+                  display: flex;
+                  justify-content: center;
+                  gap: 15px;
+              }
+              .save-button-container button {
+                  font-size: 16px;
+                  padding: 10px 20px;
+                  width: auto;
+                  height: 50px;
+                  box-sizing: border-box;
+              }
+              .reset-button {
+                  color: white;
+                  background-color: red;
+                  border: none;
+                  cursor: pointer;
+              }
+              .reset-button:hover {
+                  background-color: darkred;
+              }
+          </style>
+          <script>
+              document.addEventListener("DOMContentLoaded", function () {
+                  fetchGridData();
               });
-          }
-        }
 
-        document.addEventListener('DOMContentLoaded', () => {
-          highlightNonZeroValues();
-          document.querySelectorAll('input[type="number"]').forEach(input => {
-            input.addEventListener('input', highlightNonZeroValues);
-          });
-        });
-      </script>
-    </head>
-    <body>
-      <h2>Edit Usage Grid</h2>
-      <div class="table-container">
-        <form method="POST" action="/savegrid">
-          <table>
-            <tr>
-              <th>Day</th>
-  )rawliteral";
+              function fetchGridData() {
+                  fetch('/getgrid')
+                      .then(response => response.json())
+                      .then(data => {
+                          const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                          let html = '<form id="gridForm"><table><tr><th>Day</th>';
 
-  // Add column headers for the time slots (local time)
-  for (int i = 0; i < 96; i++) {
-    if (i % 4 == 0) { // Add labels at full hours
-      html += "<th>" + String(i / 4) + ":00</th>";
-    } else {
-      html += "<th></th>";
-    }
-  }
-  html += "</tr>";
+                          // Generate time slot headers
+                          for (let i = 0; i < 96; i++) {
+                              if (i % 4 === 0) {
+                                  html += `<th class="full-hour">${Math.floor(i / 4)}:00</th>`;
+                              } else {
+                                  html += "<th></th>";
+                              }
+                          }
+                          html += '</tr>';
 
-  // Add rows for each day of the week
-  const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-  for (int day = 0; day < 7; day++) {
-    html += "<tr>";
-    html += "<td>" + String(days[day]) + "</td>";
-    for (int slot = 0; slot < 96; slot++) {
-      // Generate input fields for the usage grid
-      html += "<td><input type='number' size='2' name='slot" + String(day) + "_" + String(slot) + 
-              "' value='" + String(usagePattern[day][slot]) + "' min='0' max='255'></td>";
-    }
-    html += "</tr>";
-  }
+                          // Generate grid rows with input fields
+                          for (let day = 0; day < 7; day++) {
+                              html += `<tr><td>${days[day]}</td>`;
+                              for (let slot = 0; slot < 96; slot++) {
+                                  let extraClass = (slot % 4 === 0) ? "full-hour" : "";
+                                  html += `<td class="${extraClass}"><input type="number" size="2" name="slot${day}_${slot}" value="${data[day][slot]}" min="0" max="255"></td>`;
+                              }
+                              html += '</tr>';
+                          }
+                          html += '</table></form>';
 
-  html += R"rawliteral(
-          </table>
-          <div class="save-button-container">
-            <input type="submit" value="Save">
-            <button type="button" class="reset-button" onclick="confirmReset()">Reset All</button>
+                          document.getElementById("gridContainer").innerHTML = html;
+                          highlightNonZeroValues();
+                      })
+                      .catch(error => console.error('Error fetching grid data:', error));
+              }
+
+              function highlightNonZeroValues() {
+                  document.querySelectorAll('input[type="number"]').forEach(input => {
+                      input.style.backgroundColor = (parseInt(input.value) > 0) ? 'yellow' : '';
+                  });
+              }
+
+              function saveGridData() {
+                  const formData = new FormData(document.getElementById("gridForm"));
+                  fetch('/savegrid', {
+                      method: 'POST',
+                      body: new URLSearchParams(formData) // Convert form data to a URL-encoded string
+                  }).then(response => {
+                      if (response.ok) {
+                          alert("Grid saved successfully!");
+                          highlightNonZeroValues();
+                      } else {
+                          alert("Error saving grid!");
+                      }
+                  }).catch(error => {
+                      alert("Error: " + error);
+                  });
+              }
+
+              function confirmReset() {
+                  if (confirm('Are you sure you want to reset the entire grid?')) {
+                      fetch('/resetgrid', { method: 'POST' })
+                          .then(response => response.ok ? fetchGridData() : alert('Failed to reset grid'))
+                          .catch(error => alert('Error resetting grid: ' + error));
+                  }
+              }
+          </script>
+      </head>
+      <body>
+          <h2>Edit Usage Grid</h2>
+          <div class="table-container" id="gridContainer">
+              <p>Loading grid...</p>
           </div>
-        </form>
-      </div>
-    </body>
-    </html>
-  )rawliteral";
-
-  server.send(200, "text/html", html);
+          <div class="save-button-container">
+              <button type="button" onclick="saveGridData()">Save</button>
+              <button type="button" class="reset-button" onclick="confirmReset()">Reset All</button>
+          </div>
+          <br>
+          <a href='/'>Back to Home</a>
+      </body>
+      </html>
+  )rawliteral");
 });
+
+
+server.on("/getgrid", HTTP_GET, []() {
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);  // Enables chunked transfer
+  server.send(200, "application/json", "[");  // Start JSON array
+
+  for (int day = 0; day < 7; day++) {
+      String dayJson = "[";  // Build day's data in a single string
+
+      for (int slot = 0; slot < 96; slot++) {
+          dayJson += String(usagePattern[day][slot]);
+          if (slot < 95) dayJson += ",";  // Add comma between values
+      }
+
+      dayJson += "]";  // Close the day array
+      server.sendContent(dayJson);  // Send the entire day's data at once
+
+      if (day < 6) server.sendContent(",");  // Add comma between days
+  }
+
+  server.sendContent("]");  // End JSON array
+});
+
 
 
 server.on("/savegrid", HTTP_POST, []() {
@@ -512,17 +639,6 @@ server.on("/resetgrid", HTTP_POST, []() {
 });
 
 
-server.on("/getTempValue", HTTP_GET, []() {
-  // Prepare the response in JSON format
-  String temperatureData = "{";
-  temperatureData += "\"initialAvgTemp\": " + String(initialAvgTemp) + ", ";
-  temperatureData += "\"currentAvgTemp\": " + String(currentAvgTemp);
-  temperatureData += "}";
-
-  // Send the response with appropriate headers
-  server.send(200, "application/json", temperatureData);
-});
-
 server.on("/status", HTTP_GET, []() {
   server.send(200, "text/html", R"rawliteral(
     <!DOCTYPE html>
@@ -546,47 +662,18 @@ server.on("/status", HTTP_GET, []() {
         }
       </style>
       <script>
-        function updateTempValue() {
-          fetch('/getTempValue')
-            .then(response => response.json())
-            .then(data => {
-              // Update the temp values on the webpage
-              document.getElementById('initialAvgTemp').innerText = data.initialAvgTemp;
-              document.getElementById('currentAvgTemp').innerText = data.currentAvgTemp;
-            })
-            .catch(error => console.error('Error fetching temp value:', error));
-        }
-
-        function updateDateTime() {
-          fetch('/getDateTime')
+        function updateStatus() {
+          fetch('/getstatus')
             .then(response => response.json())
             .then(data => {
               document.getElementById('dateTime').innerText = data.dateTime;
-            })
-            .catch(error => console.error('Error fetching date and time:', error));
-        }
-
-        function updatePumpStatus() {
-          fetch('/getPumpStatus')
-            .then(response => response.json())
-            .then(data => {
+              document.getElementById('uptime').innerText = data.uptime;
+              document.getElementById('initialAvgTemp').innerText = data.initialAvgTemp;
+              document.getElementById('currentAvgTemp').innerText = data.currentAvgTemp;
+              document.getElementById('deltaTemp').innerText = data.deltaTemp;
               document.getElementById('pumpStatus').innerText = data.pumpStatus;
             })
-            .catch(error => console.error('Error fetching pump status:', error));
-        }
-
-        function updateUptime() {
-            fetch('/getuptime')
-                .then(response => response.text())
-                .then(text => document.getElementById('uptime').innerText = text)
-                .catch(error => console.error('Error fetching uptime:', error));
-        }        
-
-        function updateAll() {
-          updateTempValue();
-          updateDateTime();
-          updatePumpStatus();
-          updateUptime();
+            .catch(error => console.error('Error fetching status:', error));
         }
 
         function restartESP() {
@@ -598,7 +685,7 @@ server.on("/status", HTTP_GET, []() {
             }
         }        
 
-        setInterval(updateAll, 3000); // Update every x seconds
+        setInterval(updateStatus, 3000); // Fetch all data every 3 seconds
       </script>
     </head>
     <body>
@@ -608,70 +695,59 @@ server.on("/status", HTTP_GET, []() {
         <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
         <p><strong>Previous Temperature:</strong> <span id="initialAvgTemp">Loading...</span></p>
         <p><strong>Current Temperature:</strong> <span id="currentAvgTemp">Loading...</span></p>
+        <p><strong>Delta Temperature:</strong> <span id="deltaTemp">Loading...</span></p>
         <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
         <p><button onclick="restartESP()">Restart</button></p>
       </div>
+      <br>
+      <a href='/'>Back to Home</a>
     </body>
     </html>
   )rawliteral");
 });
 
 
-server.on("/getuptime", HTTP_GET, []() {
-    server.send(200, "text/plain", getUptime());
+server.on("/getstatus", HTTP_GET, []() {
+  StaticJsonDocument<256> doc;
+  doc["dateTime"] = getCurrentDateTime();   // Replace with your function
+  doc["uptime"] = getUptime();              // Replace with your function
+  doc["initialAvgTemp"] = String(initialAvgTemp);
+  doc["currentAvgTemp"] = String(currentAvgTemp);
+  doc["deltaTemp"] = String(deltaT);
+  doc["pumpStatus"] = pumpActivated ? "ON" : "OFF"; // Replace with actual logic
+
+  String response;
+  serializeJson(doc, response);
+  server.send(200, "application/json", response);
 });
-
-server.on("/getDateTime", HTTP_GET, []() {
-  // Get current local time
-  time_t now = time(nullptr); // Get current UTC time
-  now += utcOffsetSeconds;    // Adjust for local time
-  struct tm *localTime = gmtime(&now); // Convert to local time struct
-
-  char timeString[128];
-  strftime(timeString, sizeof(timeString), "%A, %Y-%m-%d %H:%M:%S", localTime); // Format: Day, Date, Time
-
-  // Create JSON response
-  String json = "{";
-  json += "\"dateTime\": \"" + String(timeString) + "\", ";
-  json += "\"utcOffset\": " + String(utcOffsetSeconds);
-  json += "}";
-
-  server.send(200, "application/json", json);
-});
-
-server.on("/getPumpStatus", HTTP_GET, []() {
-  // Get the current local time
-  time_t now = time(nullptr);
-  now += utcOffsetSeconds; // Adjust for local time
-  struct tm *localTime = gmtime(&now); // Convert to local time
-
-  // Format the local time
-  char timeString[64];
-  strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", localTime);
-
-  // Create JSON response
-  String json = "{";
-  json += "\"pumpStatus\": \"" + String(pumpActivated ? "Active" : "Inactive") + "\", ";
-  json += "\"localTime\": \"" + String(timeString) + "\"";
-  json += "}";
-
-  // Send the JSON response
-  server.send(200, "application/json", json);
-});
-
 
   server.begin();
 }
 
 void loop() {
   static unsigned long lastTimeSync = 0;
+  static bool wifiConnecting = false;
 
   ArduinoOTA.handle();
 
   if (isOtaUpdating) {
+      server.stop();
       return;  // Skip the rest of the loop
   }
 
+  if (strlen(ssid) > 0 && WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi lost. Reconnecting...");
+    WiFi.reconnect();
+    wifiConnecting = true;
+  }
+
+  if(wifiConnecting && WiFi.status() == WL_CONNECTED)
+  {
+    wifiConnecting = false;
+    server.begin();
+    setupOTA();
+  }
+  
   // Periodically update the timezone and resync time (every 24 hours)
   if (millis() - lastTimeSync > 86400000) { // 24 hours in milliseconds
     fetchTimezoneOffset();
@@ -680,7 +756,7 @@ void loop() {
   }
 
   server.handleClient();
-
+  
   temperatureMeasurement();
 
   // Update usage patterns every 15 minutes
@@ -699,67 +775,82 @@ void loop() {
   }
 }
 
-void temperatureMeasurement()
-{
-    unsigned long currentMillis = millis();
+String getCurrentDateTime() {
+  DateTime now = rtc.now();
+  
+  char buffer[30];
+  snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d",
+           now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
 
-    if (!sleepPhase) {
-        if (measuring && sensors.isConversionComplete()) {
-            measuring = false;
-            float currentTemp = sensors.getTempCByIndex(0);
+  return String(buffer);
+}
 
-            sumTemp += currentTemp;
-            numReadings++;
+void temperatureMeasurement() {
+  unsigned long currentMillis = millis();
 
-            Serial.print("Measured Temperature: ");
-            Serial.print(currentTemp);
-            Serial.println(" °C");
+  if (!sleepPhase) {
+      // Measuring phase: collect as many readings as possible in the given time
+      if (measuring && sensors.isConversionComplete()) {
+          measuring = false;
+          float currentTemp = sensors.getTempCByIndex(0);
 
-            // Start next async measurement
-            sensors.requestTemperatures();
-            measuring = true;
+          sumTemp += currentTemp;
+          numReadings++;
 
-            // End measurement window
-            if (currentMillis - cycleStartTime >= measureDuration) {
-                if(numReadings > 0)
-                {
-                  currentAvgTemp = sumTemp / numReadings;
-                  float deltaT = currentAvgTemp - initialAvgTemp;
+          Serial.print("Measured Temperature: ");
+          Serial.print(currentTemp);
+          Serial.println(" °C");
 
-                  Serial.print("Average Temp: ");
-                  Serial.print(currentAvgTemp);
-                  Serial.println(" °C");
+          // Start the next async measurement immediately
+          sensors.requestTemperatures();
+          measuring = true;
+      }
 
-                  Serial.print("ΔT: ");
-                  Serial.print(deltaT);
-                  Serial.println(" °C");
+      // End of measurement phase after `measureDuration` seconds
+      if (currentMillis - cycleStartTime >= measureDuration) {
+          if (numReadings > 0) {
+              currentAvgTemp = sumTemp / numReadings;
+              deltaT = currentAvgTemp - initialAvgTemp;
 
-                  if (deltaT <= -threshold) {
-                      Serial.println(">>> Hot water usage detected! <<<");
-                      recordUsage();  // Trigger logging & pump activation
-                  }
-                }
+              Serial.print("Average Temp: ");
+              Serial.print(currentAvgTemp);
+              Serial.println(" °C");
 
-                sleepPhase = true;
-                cycleStartTime = millis();
-            }
-        }
-    } else {
-        if (currentMillis - cycleStartTime >= sleepDuration) {
-            sleepPhase = false;
-            cycleStartTime = millis();
+              Serial.print("ΔT: ");
+              Serial.print(deltaT);
+              Serial.println(" °C");
 
-            initialAvgTemp = (currentAvgTemp > 0) ? currentAvgTemp : initialAvgTemp;
+              if (deltaT <= -threshold) {
+                  Serial.println(">>> Hot water usage detected! <<<");
+                  recordUsage();  // Trigger logging & pump activation
+              }
+          }
 
-            sumTemp = 0;
-            numReadings = 0;
+          // Switch to sleep phase
+          sleepPhase = true;
+          cycleStartTime = millis();
+          Serial.println(">>> Entering sleep phase...");
+      }
+  } 
+  else { // Sleep phase
+      if (currentMillis - cycleStartTime >= sleepDuration) {
+          sleepPhase = false;
+          cycleStartTime = millis();
 
-            sensors.requestTemperatures();
-            measuring = true;
+          // Update reference temperature
+          initialAvgTemp = (currentAvgTemp > 0) ? currentAvgTemp : initialAvgTemp;
 
-            Serial.println(">>> Starting new measurement cycle...");
-        }
-    }  
+          // Reset measurement variables
+          sumTemp = 0;
+          numReadings = 0;
+
+          // Start a new measurement cycle
+          sensors.requestTemperatures();
+          measuring = true;
+
+          Serial.println(">>> Starting new measurement cycle...");
+      }
+  }
 }
 
 void startAccessPoint() {
@@ -780,26 +871,23 @@ void logCurrentTime() {
 
 
 void synchronizeTime() {
-  Serial.println("Synchronizing time with NTP...");
+    Serial.println("Synchronizing time with NTP...");
 
-  // Configure the NTP server
-  configTime(0, 0, "pool.ntp.org"); // Set NTP server
+    configTime(0, 0, "pool.ntp.org");
 
-  // Wait for time synchronization
-  time_t now = time(nullptr);
-  for (int i = 0; i < 20; i++) { // Wait up to 10 seconds for time sync
-    if (now > 100000) break;    // Valid time synchronized
-    delay(500);
-    now = time(nullptr);
-    Serial.print(".");
-  }
+    time_t now = time(nullptr);
+    for (int i = 0; i < 20; i++) {
+        if (now > 100000) break;
+        delay(500);
+        now = time(nullptr);
+    }
 
-  if (now > 100000) {
-    Serial.println("\nTime synchronized!");
-    logCurrentTime(); // Log the adjusted local time
-  } else {
-    Serial.println("\nFailed to synchronize time.");
-  }
+    if (now > 100000) {
+        Serial.println("Time synchronized with NTP.");
+        rtc.adjust(DateTime(now));  // Store in RTC
+    } else {
+        Serial.println("Failed to sync with NTP.");
+    }
 }
 
 
@@ -1015,26 +1103,47 @@ void generateVisualizationPage() {
         <tr>
           <th>Day</th>
           <th>Time Interval</th>
-          <th>Usage Count</th>
         </tr>
   )rawliteral";
 
   const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+
   for (int day = 0; day < 7; day++) {
+    int startSlot = -1;  // Start slot of a usage block
     for (int slot = 0; slot < 96; slot++) {
       if (usagePattern[day][slot] > 0) {
-        int startHour = (slot * 15) / 60;
-        int startMinute = (slot * 15) % 60;
-        int endHour = ((slot + 1) * 15) / 60;
-        int endMinute = ((slot + 1) * 15) % 60;
+        if (startSlot == -1) {
+          startSlot = slot; // Start new usage block
+        }
+      } else if (startSlot != -1) {
+        // End of a usage block, add it to HTML
+        int startHour = (startSlot * 15) / 60;
+        int startMinute = (startSlot * 15) % 60;
+        int endHour = (slot * 15) / 60;
+        int endMinute = (slot * 15) % 60;
 
         html += "<tr>";
         html += "<td>" + String(days[day]) + "</td>";
         html += "<td>" + String(startHour) + ":" + (startMinute < 10 ? "0" : "") + String(startMinute) + " - ";
         html += String(endHour) + ":" + (endMinute < 10 ? "0" : "") + String(endMinute) + "</td>";
-        html += "<td>" + String(usagePattern[day][slot]) + "</td>";
         html += "</tr>";
+
+        startSlot = -1; // Reset for the next block
       }
+    }
+
+    // If the last slot was a usage slot, close the block
+    if (startSlot != -1) {
+      int startHour = (startSlot * 15) / 60;
+      int startMinute = (startSlot * 15) % 60;
+      int endHour = 23;
+      int endMinute = 59;
+
+      html += "<tr>";
+      html += "<td>" + String(days[day]) + "</td>";
+      html += "<td>" + String(startHour) + ":" + (startMinute < 10 ? "0" : "") + String(startMinute) + " - ";
+      html += String(endHour) + ":" + (endMinute < 10 ? "0" : "") + String(endMinute) + "</td>";
+      html += "</tr>";
     }
   }
 
@@ -1081,30 +1190,29 @@ String getUptime() {
 }
 
 void setupOTA() {
-    ArduinoOTA.onStart([]() {
-        Serial.println("OTA Update Started...");
-        isOtaUpdating = true;  // Suspend other web activities
-    });
+  ArduinoOTA.setHostname(MDNS_NAME);  // Set the OTA hostname to "pump.local"
+  
+  ArduinoOTA.onStart([]() {
+      Serial.println("OTA update started...");
+  });
 
-    ArduinoOTA.onEnd([]() {
-        Serial.println("OTA Update Finished!");
-        isOtaUpdating = false; // Resume normal operation
-    });
+  ArduinoOTA.onEnd([]() {
+      Serial.println("\nOTA update complete!");
+  });
 
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        Serial.printf("OTA Progress: %u%%\n", (progress / (total / 100)));
-    });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+      Serial.printf("Progress: %u%%\n", (progress / (total / 100)));
+  });
 
-    ArduinoOTA.onError([](ota_error_t error) {
-        Serial.printf("OTA Error[%u]: ", error);
-        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-        else if (error == OTA_END_ERROR) Serial.println("End Failed");
-        isOtaUpdating = false;  // Resume operation after failure
-    });
+  ArduinoOTA.onError([](ota_error_t error) {
+      Serial.printf("OTA Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+      else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
 
-    ArduinoOTA.begin();
-    Serial.println("OTA Ready");
+  ArduinoOTA.begin();
+  Serial.printf("OTA Ready! Accessible via %s.local\n", MDNS_NAME);
 }
