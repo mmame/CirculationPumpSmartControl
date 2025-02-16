@@ -41,6 +41,7 @@ String getCurrentDateTime();
 bool isOtaUpdating = false;  // Flag to track OTA updates
 
 RTC_PCF8563 rtc;
+bool rtcAvailable = false;
 
 int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
@@ -98,61 +99,62 @@ const int endOffset = 5;    // Stop 5 minutes after the recorded time
 
 void setup() {
   Serial.begin(115200);
-
   Wire.begin();
-    
-  if (!rtc.begin()) {
-      Serial.println("Couldn't find RTC");
-  } else {
-      Serial.println("RTC found.");
-  }
 
-  if (rtc.lostPower()) {
-    Serial.println("RTC not initialized, setting default time...");
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));  // Set RTC to compile-time
-  }  
+  // Check if RTC is available
+  rtcAvailable = rtc.begin();
+  
+  if (rtcAvailable) {
+      Serial.println("RTC found.");
+      if (rtc.lostPower()) {
+          Serial.println("RTC not initialized, setting default time...");
+          rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));  // Set RTC to compile-time
+      }
+
+      // Set system time from RTC if available
+      DateTime now = rtc.now();
+      struct timeval tv = { now.unixtime(), 0 };
+      settimeofday(&tv, nullptr);
+  } else {
+      Serial.println("RTC not found. Falling back to NTP.");
+  }
 
   // Initialize Preferences
   preferences.begin("water-usage", false);
 
-    // Load stored settings (or use defaults if not found)
-    threshold = preferences.getFloat("threshold", TempChangeThresholdDefault);
-    measureDuration = preferences.getUInt("measureDuration", MeasureDurationDefault);
-    sleepDuration = preferences.getUInt("sleepDuration", SleepDurationDefault);
+  // Load stored settings (or use defaults if not found)
+  threshold = preferences.getFloat("threshold", TempChangeThresholdDefault);
+  measureDuration = preferences.getUInt("measureDuration", MeasureDurationDefault);
+  sleepDuration = preferences.getUInt("sleepDuration", SleepDurationDefault);
 
-    // Load Wi-Fi credentials
+  // Load Wi-Fi credentials
   loadWiFiCredentials();
 
   // Connect to Wi-Fi
-  if(strlen(ssid) > 0)
-  {
-    WiFi.begin(ssid, password);
-    Serial.printf("Connecting to WiFi: %s\n", ssid);
-    for(int i=0; i<120; i++)
-    {
-      if (WiFi.status() == WL_CONNECTED) {
-        break;
+  if (strlen(ssid) > 0) {
+      WiFi.begin(ssid, password);
+      Serial.printf("Connecting to WiFi: %s\n", ssid);
+      for (int i = 0; i < 120; i++) {
+          if (WiFi.status() == WL_CONNECTED) {
+              break;
+          }
+          delay(500);
+          Serial.print(".");
       }
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println("\nWiFi connected!");
-    Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
-  }
-  else
-  {
-    startAccessPoint();
+      Serial.println("\nWiFi connected!");
+      Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
+  } else {
+      startAccessPoint();
   }
 
   // Fetch timezone offset
   fetchTimezoneOffset();
 
-  // Synchronize time with NTP server
   synchronizeTime();
-
+  
   // Set up OTA updates
   setupOTA();
- 
+
   // Set up pump relay
   pinMode(PUMP_RELAY_PIN, OUTPUT);
   digitalWrite(PUMP_RELAY_PIN, LOW);
@@ -161,8 +163,8 @@ void setup() {
   loadUsagePattern();
 
   sensors.begin();
-  sensors.setResolution(11); 
-  sensors.setWaitForConversion(false);  // Non-blocking Modus aktivieren
+  sensors.setResolution(11);
+  sensors.setWaitForConversion(false);
 
   // Start first measurement
   sensors.requestTemperatures();
@@ -336,10 +338,17 @@ server.on("/settime", HTTP_POST, []() {
       int minute = server.arg("minute").toInt();
       int second = server.arg("second").toInt();
 
-      rtc.adjust(DateTime(year, month, day, hour, minute, second));
-      server.send(200, "text/html", "<h2>RTC Time Updated! <a href='/'>Back</a></h2>");
+      if(rtcAvailable)
+      {
+        rtc.adjust(DateTime(year, month, day, hour, minute, second));
+        server.send(200, "text/html", "<h2>RTC Time Updated! <a href='/'>Back to Home</a></h2>");
+      }
+      else
+      {
+        server.send(500, "text/html", "<h2>Missing RTC. <a href='/'>Back to Home</a></h2>");  
+      }
   } else {
-      server.send(400, "text/html", "<h2>Invalid Input. <a href='/settime'>Back</a></h2>");
+      server.send(400, "text/html", "<h2>Invalid Input. <a href='/timeconfig'>Back</a></h2>");
   }
 });
 
@@ -776,11 +785,18 @@ void loop() {
 }
 
 String getCurrentDateTime() {
-  DateTime now = rtc.now();
+  time_t now = time(nullptr);
+  now += utcOffsetSeconds;
+  struct tm *timeinfo = gmtime(&now);
   
+  if (timeinfo == nullptr) {
+      return "Time not available";
+  }
+
   char buffer[30];
   snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d",
-           now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+           timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+           timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 
   return String(buffer);
 }
@@ -871,24 +887,29 @@ void logCurrentTime() {
 
 
 void synchronizeTime() {
-    Serial.println("Synchronizing time with NTP...");
+  Serial.println("Synchronizing time with NTP...");
 
-    configTime(0, 0, "pool.ntp.org");
+  configTime(0, 0, "pool.ntp.org");
 
-    time_t now = time(nullptr);
-    for (int i = 0; i < 20; i++) {
-        if (now > 100000) break;
-        delay(500);
-        now = time(nullptr);
-    }
+  time_t now = time(nullptr);
+  for (int i = 0; i < 20; i++) {
+      if (now > 100000) break;
+      delay(500);
+      now = time(nullptr);
+  }
 
-    if (now > 100000) {
-        Serial.println("Time synchronized with NTP.");
-        rtc.adjust(DateTime(now));  // Store in RTC
-    } else {
-        Serial.println("Failed to sync with NTP.");
-    }
+  if (now > 100000) {
+      Serial.println("Time synchronized with NTP.");
+      
+      if (rtcAvailable) {
+          rtc.adjust(DateTime(now));  // Store in RTC if available
+          Serial.println("RTC updated with NTP time.");
+      }
+  } else {
+      Serial.println("Failed to sync with NTP.");
+  }
 }
+
 
 
 void fetchTimezoneOffset() {
@@ -1077,6 +1098,8 @@ void loadUsagePattern() {
 }
 
 void generateVisualizationPage() {
+  int totalActiveMinutes = 0;  // Tracks total pump runtime in minutes per week
+
   String html = R"rawliteral(
     <!DOCTYPE html>
     <html>
@@ -1095,6 +1118,18 @@ void generateVisualizationPage() {
         tr:nth-child(even) {
           background-color: #f9f9f9;
         }
+        .summary-box {
+          margin-top: 20px;
+          padding: 10px;
+          border: 1px solid #000;
+          text-align: center;
+          font-size: 18px;
+          font-weight: bold;
+          background-color: #f0f0f0;
+          width: fit-content;
+          margin-left: auto;
+          margin-right: auto;
+        }
       </style>
     </head>
     <body>
@@ -1112,6 +1147,7 @@ void generateVisualizationPage() {
     int startSlot = -1;  // Start slot of a usage block
     for (int slot = 0; slot < 96; slot++) {
       if (usagePattern[day][slot] > 0) {
+        totalActiveMinutes += 15;  // Count each active 15-min slot
         if (startSlot == -1) {
           startSlot = slot; // Start new usage block
         }
@@ -1147,8 +1183,16 @@ void generateVisualizationPage() {
     }
   }
 
+  // **Calculate total pump runtime**
+  float totalHours = totalActiveMinutes / 60.0;
+  float percentage = (totalActiveMinutes / 10080.0) * 100.0; // 10080 minutes in a week
+
   html += R"rawliteral(
       </table>
+      <div class="summary-box">
+        <p><strong>Total Pump Running Time:</strong> )rawliteral" + 
+        String(totalHours, 1) + " hours per week (" + String(percentage, 1) + "%)</p>" + 
+        R"rawliteral(</div>
       <br>
       <a href="/">Back to Home</a>
     </body>
