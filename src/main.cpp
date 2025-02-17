@@ -973,8 +973,7 @@ void recordUsage() {
     return;
   }
 
-  if(slotRecorded)
-  {
+  if (slotRecorded) {
     return;
   }
 
@@ -986,30 +985,13 @@ void recordUsage() {
   int currentDay = localTime->tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
   int currentSlot = (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
 
-  // Handle day rollover for neighboring slots
-  int prevDay = (currentDay == 0) ? 6 : currentDay - 1; // Previous day
-  int nextDay = (currentDay == 6) ? 0 : currentDay + 1; // Next day
-
-  // Add 0.5 * IncreaseOnUsage to the previous slot (or last slot of the previous day)
-  if (currentSlot == 0) {
-    usagePattern[prevDay][95] = min(255, usagePattern[prevDay][95] + IncreaseOnUsage / 2);
-  } else {
-    usagePattern[currentDay][currentSlot - 1] = min(255, usagePattern[currentDay][currentSlot - 1] + IncreaseOnUsage / 2);
-  }
-
-  // Add full IncreaseOnUsage to the current slot
+  // Update the current slot now
   usagePattern[currentDay][currentSlot] = min(255, usagePattern[currentDay][currentSlot] + IncreaseOnUsage);
-
-  // Add 0.5 * IncreaseOnUsage to the next slot (or first slot of the next day)
-  if (currentSlot == 95) {
-    usagePattern[nextDay][0] = min(255, usagePattern[nextDay][0] + IncreaseOnUsage / 2);
-  } else {
-    usagePattern[currentDay][currentSlot + 1] = min(255, usagePattern[currentDay][currentSlot + 1] + IncreaseOnUsage / 2);
-  }
 
   // Save the updated usage pattern
   saveUsagePattern();
   Serial.printf("Usage recorded: Day %d, Slot %d, Value %d\n", currentDay, currentSlot, usagePattern[currentDay][currentSlot]);
+
   slotRecorded = true;
 }
 
