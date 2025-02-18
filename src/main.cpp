@@ -20,7 +20,7 @@
 // Forward declarations
 void startAccessPoint();
 void synchronizeTime();
-void fetchTimezoneOffset();
+void fetchAndSetTimezone();
 void saveWiFiCredentials(const String& newSSID, const String& newPassword);
 void loadWiFiCredentials();
 void recordUsage();
@@ -44,7 +44,8 @@ bool isOtaUpdating = false;  // Flag to track OTA updates
 RTC_PCF8563 rtc;
 bool rtcAvailable = false;
 
-int utcOffsetSeconds = 0; // Global variable to store the UTC offset
+String timezone = "";
+//int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool pumpActivated = false;
 bool slotRecorded = false; // Tracks if usage has been recorded for the current slot
 
@@ -147,9 +148,6 @@ void setup() {
   } else {
       startAccessPoint();
   }
-
-  // Fetch timezone offset
-  fetchTimezoneOffset();
 
   synchronizeTime();
   
@@ -771,8 +769,7 @@ void loop() {
   if(WiFi.status() == WL_CONNECTED)
   {
     // Periodically update the timezone and resync time
-    if (millis() - lastTimeSync > 3600000) { 
-      fetchTimezoneOffset();
+    if (millis() - lastTimeSync > 86400000) { 
       synchronizeTime();
       lastTimeSync = millis();
     }
@@ -800,17 +797,16 @@ void loop() {
 
 String getCurrentDateTime() {
   time_t now = time(nullptr);
-  now += utcOffsetSeconds;
-  struct tm *timeinfo = gmtime(&now);
-  
-  if (timeinfo == nullptr) {
-      return "Time not available";
+  struct tm timeinfo;
+
+  if (!getLocalTime(&timeinfo)) {
+    return "Failed to obtain time";
   }
 
   char buffer[30];
   snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d",
-           timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
-           timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+           timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+           timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
 
   return String(buffer);
 }
@@ -889,14 +885,11 @@ void startAccessPoint() {
 }
 
 void logCurrentTime() {
-  time_t now = time(nullptr); // Get the current UTC time
-  now += utcOffsetSeconds;   // Adjust for the offset
-
-  struct tm *timeInfo = gmtime(&now); // Use gmtime since we already adjusted for the offset
-
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
   char timeString[64];
-  strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", timeInfo);
-  Serial.printf("Local Time: %s (Offset: %d seconds)\n", timeString, utcOffsetSeconds);
+  strftime(timeString, sizeof(timeString), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  Serial.printf("Local Time: %s\n", timeString);
 }
 
 
@@ -915,6 +908,8 @@ void synchronizeTime() {
   if (now > 100000) {
       Serial.println("Time synchronized with NTP.");
       
+      fetchAndSetTimezone();
+
       if (rtcAvailable) {
           rtc.adjust(DateTime(now));  // Store in RTC if available
           Serial.println("RTC updated with NTP time.");
@@ -924,43 +919,67 @@ void synchronizeTime() {
   }
 }
 
+// Function to map timezone_name to POSIX TZ format
+String getPosixTZ(String timezoneName) {
+  if (timezoneName == "UTC") return "UTC0";
+  if (timezoneName == "GMT") return "GMT0BST,M3.5.0/1,M10.5.0";
+  if (timezoneName == "CET") return "CET-1CEST,M3.5.0,M10.5.0/3";
+  if (timezoneName == "EET") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
+  if (timezoneName == "MSK") return "MSK-3";
+  if (timezoneName == "IST") return "IST-5:30";
+  if (timezoneName == "WIB") return "WIB-7";
+  if (timezoneName == "WITA") return "WITA-8";
+  if (timezoneName == "WIT") return "WIT-9";
+  if (timezoneName == "JST") return "JST-9";
+  if (timezoneName == "KST") return "KST-9";
+  if (timezoneName == "CST") return "CST6CDT,M3.2.0,M11.1.0";
+  if (timezoneName == "EST") return "EST5EDT,M3.2.0,M11.1.0";
+  if (timezoneName == "PST") return "PST8PDT,M3.2.0,M11.1.0";
+  if (timezoneName == "MST") return "MST7MDT,M3.2.0,M11.1.0";
+  if (timezoneName == "HST") return "HST10";
+  if (timezoneName == "AKST") return "AKST9AKDT,M3.2.0,M11.1.0";
+  if (timezoneName == "AST") return "AST4ADT,M3.2.0,M11.1.0";
+  if (timezoneName == "NZST") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
+  if (timezoneName == "AEST") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+  if (timezoneName == "ACST") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
+  if (timezoneName == "AWST") return "AWST-8";
+  if (timezoneName == "BST") return "BST-6";
+  if (timezoneName == "PKT") return "PKT-5";
+  if (timezoneName == "HKT") return "HKT-8";
+  if (timezoneName == "SGT") return "SGT-8";
+  if (timezoneName == "IRKT") return "IRKT-8";
+  if (timezoneName == "YAKT") return "YAKT-9";
+  if (timezoneName == "VLAT") return "VLAT-10";
 
-
-void fetchTimezoneOffset() {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    http.begin("http://ipwhois.app/json/");
-    int httpResponseCode = http.GET();
-
-    if (httpResponseCode == 200) {
-      String payload = http.getString();
-      Serial.println("API Response:");
-      Serial.println(payload); // Log the API response
-
-      StaticJsonDocument<1024> doc;
-      DeserializationError error = deserializeJson(doc, payload);
-
-      if (!error) {
-        int gmtOffset = doc["timezone_gmtOffset"].as<int>(); // Parse the correct field
-        int dstOffset = doc["timezone_dstOffset"].as<int>(); // Parse DST adjustment
-
-        // Combine the offsets
-        utcOffsetSeconds = gmtOffset + dstOffset;
-
-        Serial.printf("Fetched UTC Offset: %d seconds (GMT Offset: %d, DST Offset: %d)\n", 
-                      utcOffsetSeconds, gmtOffset, dstOffset);
-      } else {
-        Serial.println("Failed to parse JSON, keeping existing offset.");
-      }
-    } else {
-      Serial.printf("HTTP GET failed: %d, keeping existing offset.\n", httpResponseCode);
-    }
-
-    http.end();
-  } else {
-    Serial.println("Wi-Fi not connected, keeping existing offset.");
-  }
+  return "UTC0";  // Default fallback
 }
+
+void fetchAndSetTimezone() {
+  HTTPClient http;
+  http.begin("http://ipwhois.app/json/");
+  
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(1024);
+      deserializeJson(doc, payload);
+      
+      String timezoneName = doc["timezone_name"].as<String>();
+      Serial.print("Timezone Name: ");
+      Serial.println(timezoneName);
+
+      String posixTZ = getPosixTZ(timezoneName);
+      Serial.print("POSIX Timezone: ");
+      Serial.println(posixTZ);
+
+      setenv("TZ", posixTZ.c_str(), 1);
+      tzset();
+  } else {
+      Serial.println("Failed to fetch timezone!");
+  }
+  http.end();
+}
+
 
 void saveWiFiCredentials(const String& newSSID, const String& newPassword) {
   preferences.putString("ssid", newSSID);
@@ -992,12 +1011,11 @@ void recordUsage() {
   }
 
   // Get current local time
-  time_t now = time(nullptr);
-  now += utcOffsetSeconds;    // Adjust for local time
-  struct tm *localTime = gmtime(&now); // Convert to local time struct
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
 
-  int currentDay = localTime->tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
-  int currentSlot = (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
+  int currentDay = timeinfo.tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
+  int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15); // Local 15-min slot index
 
   // Update the current slot now
   usagePattern[currentDay][currentSlot] = min(255, usagePattern[currentDay][currentSlot] + IncreaseOnUsage);
@@ -1044,20 +1062,18 @@ void updateUsagePattern() {
 
 int getCurrentDay() {
   // Get current local time
-  time_t now = time(nullptr);
-  now += utcOffsetSeconds;    // Adjust for local time
-  struct tm *localTime = gmtime(&now); // Convert to local time struct
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
 
-  return localTime->tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
+  return timeinfo.tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
   }
 
 int getCurrentTimeSlot() {
   // Get current local time
-  time_t now = time(nullptr);
-  now += utcOffsetSeconds;    // Adjust for local time
-  struct tm *localTime = gmtime(&now); // Convert to local time struct
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
   
-  return (localTime->tm_hour * 4) + (localTime->tm_min / 15); // Local 15-min slot index
+  return (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15); // Local 15-min slot index
   }
 
 bool shouldActivatePump(int day, int slot) {
