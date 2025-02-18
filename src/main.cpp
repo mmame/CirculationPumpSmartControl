@@ -37,6 +37,7 @@ void setupOTA();
 void temperatureMeasurement();
 String getUptime();
 String getCurrentDateTime();
+void traceInfo();
 
 bool isOtaUpdating = false;  // Flag to track OTA updates
 
@@ -113,7 +114,7 @@ void setup() {
 
       // Set system time from RTC if available
       DateTime now = rtc.now();
-      struct timeval tv = { now.unixtime(), 0 };
+      struct timeval tv = { static_cast<time_t>(now.unixtime()), 0 };
       settimeofday(&tv, nullptr);
   } else {
       Serial.println("RTC not found. Falling back to NTP.");
@@ -736,6 +737,9 @@ server.on("/getstatus", HTTP_GET, []() {
 void loop() {
   static unsigned long lastTimeSync = 0;
   static bool wifiConnecting = false;
+  static unsigned long lastReconnectAttempt = 0;  // Tracks last reconnect attempt time
+
+  traceInfo();
 
   ArduinoOTA.handle();
 
@@ -745,18 +749,25 @@ void loop() {
   }
 
   if (strlen(ssid) > 0 && WiFi.status() != WL_CONNECTED) {
-    Serial.println("Wi-Fi lost. Reconnecting...");
-    WiFi.reconnect();
-    wifiConnecting = true;
+    unsigned long currentMillis = millis();
+    
+    if (currentMillis - lastReconnectAttempt >= 20000) {
+        Serial.println("Wi-Fi lost. Reconnecting...");
+        lastReconnectAttempt = currentMillis;  // Update last attempt time
+
+        if (WiFi.reconnect()) {
+            wifiConnecting = true;
+        }
+    }
   }
 
-  if(wifiConnecting && WiFi.status() == WL_CONNECTED)
-  {
-    wifiConnecting = false;
-    server.begin();
-    setupOTA();
+  if (wifiConnecting && WiFi.status() == WL_CONNECTED) {
+      wifiConnecting = false;
+      Serial.println("Wi-Fi reconnected successfully.");
+      server.begin();
+      setupOTA();
   }
-  
+    
   // Periodically update the timezone and resync time (every 24 hours)
   if (millis() - lastTimeSync > 86400000) { // 24 hours in milliseconds
     fetchTimezoneOffset();
@@ -813,9 +824,9 @@ void temperatureMeasurement() {
           sumTemp += currentTemp;
           numReadings++;
 
-          Serial.print("Measured Temperature: ");
-          Serial.print(currentTemp);
-          Serial.println(" °C");
+          //Serial.print("Measured Temperature: ");
+          //Serial.print(currentTemp);
+          //Serial.println(" °C");
 
           // Start the next async measurement immediately
           sensors.requestTemperatures();
@@ -1215,8 +1226,22 @@ String getUptime() {
   return String(uptimeStr);
 }
 
+void traceInfo(){
+
+  static unsigned long previousMillis = 0;
+
+  if (millis() - previousMillis >= 10000) {
+    previousMillis = millis();
+    
+    Serial.print("Free RAM: ");
+    Serial.print(ESP.getFreeHeap());
+    Serial.println(" bytes");
+  }
+}
+
+
 void setupOTA() {
-  ArduinoOTA.setHostname(MDNS_NAME);  // Set the OTA hostname to "pump.local"
+  ArduinoOTA.setHostname(MDNS_NAME);
   
   ArduinoOTA.onStart([]() {
       Serial.println("OTA update started...");
