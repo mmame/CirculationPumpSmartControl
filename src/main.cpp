@@ -11,7 +11,6 @@
 #define MDNS_NAME "pump"
 
 #define IncreaseOnUsage 6
-#define DecreaseWhenNoUsage 1
 
 // Forward declarations
 void startAccessPoint();
@@ -32,8 +31,6 @@ void traceInfo();
 
 bool isOtaUpdating = false;  // Flag to track OTA updates
 
-String timezone = "";
-//int utcOffsetSeconds = 0; // Global variable to store the UTC offset
 bool slotRecorded = false; // Tracks if usage has been recorded for the current slot
 
 // Wi-Fi Credentials
@@ -61,10 +58,6 @@ bool sleepPhase = false;
 // Timer
 unsigned long lastSampleTime = 0;
 const unsigned long sampleInterval = 900000; // 15 minutes
-
-// Offsets for pump activation
-const int startOffset = 10; // Start 10 minutes before the recorded time
-const int endOffset = 5;    // Stop 5 minutes after the recorded time
 
 void setup() {
   Serial.begin(115200);
@@ -440,7 +433,7 @@ void updateUsagePattern() {
         targetSlot = 95;  // Last slot of the previous day
       }
 
-      Core::usagePattern[targetDay][targetSlot] = max(0, Core::usagePattern[targetDay][targetSlot] - DecreaseWhenNoUsage);
+      Core::usagePattern[targetDay][targetSlot] = max(0, Core::usagePattern[targetDay][targetSlot]--);
       Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count.\n", targetSlot, targetDay);
     }
 
