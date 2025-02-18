@@ -768,14 +768,17 @@ void loop() {
       setupOTA();
   }
     
-  // Periodically update the timezone and resync time (every 24 hours)
-  if (millis() - lastTimeSync > 86400000) { // 24 hours in milliseconds
-    fetchTimezoneOffset();
-    synchronizeTime();
-    lastTimeSync = millis();
-  }
+  if(WiFi.status() == WL_CONNECTED)
+  {
+    // Periodically update the timezone and resync time
+    if (millis() - lastTimeSync > 3600000) { 
+      fetchTimezoneOffset();
+      synchronizeTime();
+      lastTimeSync = millis();
+    }
 
-  server.handleClient();
+    server.handleClient();
+  }
   
   temperatureMeasurement();
 
@@ -1256,6 +1259,7 @@ void setupOTA() {
   });
 
   ArduinoOTA.onError([](ota_error_t error) {
+      server.begin();
       Serial.printf("OTA Error[%u]: ", error);
       if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
       else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
