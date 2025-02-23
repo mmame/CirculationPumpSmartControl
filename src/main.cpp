@@ -10,7 +10,7 @@
 
 #define MDNS_NAME "pump"
 
-#define IncreaseOnUsage 6
+#define IncreaseOnUsage 3
 
 // Forward declarations
 void startAccessPoint();
@@ -433,8 +433,11 @@ void updateUsagePattern() {
         targetSlot = 95;  // Last slot of the previous day
       }
 
-      Core::usagePattern[targetDay][targetSlot] = max(0, Core::usagePattern[targetDay][targetSlot]--);
-      Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count.\n", targetSlot, targetDay);
+      if(Core::usagePattern[targetDay][targetSlot] > 0)
+      {
+        Core::usagePattern[targetDay][targetSlot] = max(0, Core::usagePattern[targetDay][targetSlot]--);
+        Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count to %d.\n", targetSlot, targetDay, Core::usagePattern[targetDay][targetSlot]);
+      }
     }
 
     // Reset for the new timeslot

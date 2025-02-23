@@ -452,8 +452,14 @@ void webserversetup()
                     th.full-hour, td.full-hour {
                         border-left: 3px solid black !important; /* Thicker border for full hours */
                     }
+
+                    /* --- Alternating Row Colors for Readability --- */
+                    tr:nth-child(odd) {
+                        background-color: #f2f2f2; /* Light gray */
+                    }
+                    
                     tr:nth-child(even) {
-                        background-color: #f9f9f9;
+                        background-color: #ffffff; /* white */
                     }
                     input {
                         width: 30px;
@@ -481,6 +487,21 @@ void webserversetup()
                     }
                     .reset-button:hover {
                         background-color: darkred;
+                    }
+
+                    /* --- Sticky First Column (Weekdays) --- */
+                    th:first-child, td:first-child {
+                        position: sticky;
+                        left: 0;
+                        background: inherit; /* Inherit background color from the row */
+                        z-index: 2;
+                    }
+                    /* Keep header fixed at the top */
+                    th {
+                        position: sticky;
+                        top: 0;
+                        background: #e6e6e6; /* Slightly darker background for contrast */
+                        z-index: 3;
                     }
                 </style>
                 <script>
