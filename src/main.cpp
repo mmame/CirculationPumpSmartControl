@@ -59,9 +59,15 @@ bool sleepPhase = false;
 unsigned long lastSampleTime = 0;
 const unsigned long sampleInterval = 900000; // 15 minutes
 
+#define CUSTOM_SDA 21
+#define CUSTOM_SCL 22
+
 void setup() {
   Serial.begin(115200);
-  Wire.begin();
+  Wire.begin(CUSTOM_SDA, CUSTOM_SCL);
+
+  delay(1000);
+  Serial.println("Startup...");
 
   // Check if RTC is available
   Core::rtcAvailable = Core::rtc.begin();

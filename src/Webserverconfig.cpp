@@ -325,7 +325,11 @@ void webserversetup()
       
             if(Core::rtcAvailable)
             {
-              Core::rtc.adjust(DateTime(year, month, day, hour, minute, second));
+              DateTime now = DateTime(year, month, day, hour, minute, second);
+              Core::rtc.adjust(now);
+              struct timeval tv = { static_cast<time_t>(now.unixtime()), 0 };
+              settimeofday(&tv, nullptr);
+        
               server.send(200, "text/html", "<h2>RTC Time Updated! <a href='/'>Back to Home</a></h2>");
             }
             else
