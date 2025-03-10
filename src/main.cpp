@@ -414,18 +414,36 @@ void recordUsage() {
 
 void updateUsagePattern() {
   static int lastSlot = -1;
+  static int lastDay = -1;
 
   int currentSlot = getCurrentTimeSlot();
+  int currentDay = getCurrentDay();
 
-  if (currentSlot != lastSlot) {
-      if (lastSlot != -1 && !slotRecorded) {
-          Core::pumpRunWithoutUsage++;  // Pump was running, but no usage detected
+  if (currentSlot != lastSlot) {  
+      // If last slot exists and no usage was recorded, decrement it
+      if (lastSlot != -1 && !slotRecorded) {  
+          if (Core::usagePattern[lastDay][lastSlot] > 0) {
+              Core::usagePattern[lastDay][lastSlot]--;
+              saveUsagePattern();
+              Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count to %d.\n", 
+                             lastSlot, lastDay, Core::usagePattern[lastDay][lastSlot]);
+          }
+
+          // Track "pump running without usage" statistics
+          Core::pumpRunWithoutUsage++;  
+          Serial.printf("Pump was running without usage in Slot %d on Day %d → Count: %d\n", 
+                         lastSlot, lastDay, Core::pumpRunWithoutUsage);
       }
 
+      // Reset for the new timeslot
       slotRecorded = false;
       lastSlot = currentSlot;
+      lastDay = currentDay;
+      Serial.printf("New timeslot detected: Slot %d on Day %d\n", currentSlot, currentDay);
   }
 }
+
+
 
 int getCurrentDay() {
   // Get current local time

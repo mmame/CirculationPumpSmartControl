@@ -71,7 +71,7 @@ String getStatistics() {
   String json = "{";
   json += "\"hotWaterUsedWithPump\": " + String(Core::hotWaterUsedWithPump) + ",";
   json += "\"hotWaterUsedWithoutPump\": " + String(Core::hotWaterUsedWithoutPump) + ",";
-  json += "\"pumpRunWithoutUsage\": " + String(Core::pumpRunWithoutUsage, 2) + ",";
+  json += "\"pumpRunWithoutUsage\": " + String(Core::pumpRunWithoutUsage) + ",";
   json += "\"weekly_percentage\": " + String(weeklyPercentage, 2) + ",";
   json += "\"hit_percentage\": " + String(hitPercentage, 2) + ",";
   json += "\"miss_percentage\": " + String(missPercentage, 2) + ",";
