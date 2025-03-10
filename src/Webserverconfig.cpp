@@ -69,6 +69,9 @@ String getStatistics() {
   float weeklyPercentage = activeSlots * 100.0 / totalSlots;
 
   String json = "{";
+  json += "\"hotWaterUsedWithPump\": " + String(Core::hotWaterUsedWithPump) + ",";
+  json += "\"hotWaterUsedWithoutPump\": " + String(Core::hotWaterUsedWithoutPump) + ",";
+  json += "\"pumpRunWithoutUsage\": " + String(Core::pumpRunWithoutUsage, 2) + ",";
   json += "\"weekly_percentage\": " + String(weeklyPercentage, 2) + ",";
   json += "\"hit_percentage\": " + String(hitPercentage, 2) + ",";
   json += "\"miss_percentage\": " + String(missPercentage, 2) + ",";
@@ -760,10 +763,10 @@ void webserversetup()
               <p><strong>Current Temperature:</strong> <span id="currentAvgTemp">Loading...</span></p>
               <p><strong>Delta Temperature:</strong> <span id="deltaTemp">Loading...</span></p>
               <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
-              <p><strong>Pump running Weekly Percentage:</strong> <span id="weekly_percentage">0%</span></p>
-              <p><strong>Pump Hit Percentage:</strong> <span id="hit_percentage">0%</span></p>
-              <p><strong>Pump Miss Percentage:</strong> <span id="miss_percentage">0%</span></p>
-              <p><strong>Wasted Pump Usage:</strong> <span id="waste_percentage">0%</span></p>              
+              <p><strong>Pump running Weekly Percentage:</strong> <span id="weekly_percentage">Loading...</span></p>
+              <p><strong>Pump Hit Percentage:</strong> <span id="hit_percentage">Loading...</span></p>
+              <p><strong>Pump Miss Percentage:</strong> <span id="miss_percentage">Loading...</span></p>
+              <p><strong>Wasted Pump Usage:</strong> <span id="waste_percentage">Loading...</span></p>              
               <p><button onclick="restartESP()">Restart</button></p>
             </div>
             <br>

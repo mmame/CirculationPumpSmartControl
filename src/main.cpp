@@ -414,10 +414,8 @@ void recordUsage() {
 
 void updateUsagePattern() {
   static int lastSlot = -1;
-  static int lastDay = -1;
 
   int currentSlot = getCurrentTimeSlot();
-  int currentDay = getCurrentDay();
 
   if (currentSlot != lastSlot) {
       if (lastSlot != -1 && !slotRecorded) {
@@ -426,7 +424,6 @@ void updateUsagePattern() {
 
       slotRecorded = false;
       lastSlot = currentSlot;
-      lastDay = currentDay;
   }
 }
 
