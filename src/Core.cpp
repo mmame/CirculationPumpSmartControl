@@ -18,3 +18,8 @@ float Core::deltaT = 0;
 // 7 days x 96 slots for 15-minute intervals
 int Core::usagePattern[7][96] = {0};
 
+long unsigned  Core::pumpRunTime = 0;
+long unsigned  Core::lastPumpStart = 0;
+int unsigned  Core::hotWaterUsedWithPump = 0;
+int unsigned  Core::hotWaterUsedWithoutPump = 0;
+int unsigned  Core::pumpRunWithoutUsage = 0;

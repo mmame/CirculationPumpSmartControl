@@ -49,111 +49,33 @@ String getUptime() {
   return String(uptimeStr);
 }
 
-void generateVisualizationPage() {
-  int totalActiveMinutes = 0;  // Tracks total pump runtime in minutes per week
+String getStatistics() {
+  unsigned int totalWaterUsage = Core::hotWaterUsedWithPump + Core::hotWaterUsedWithoutPump;
+  float hitPercentage = (totalWaterUsage > 0) ? (Core::hotWaterUsedWithPump * 100.0 / totalWaterUsage) : 0;
+  float missPercentage = (totalWaterUsage > 0) ? (Core::hotWaterUsedWithoutPump * 100.0 / totalWaterUsage) : 0;
+  float wastePercentage = (Core::pumpRunWithoutUsage > 0) ? (Core::pumpRunWithoutUsage * 100.0 / (Core::pumpRunWithoutUsage + totalWaterUsage)) : 0;
 
-  String html = R"rawliteral(
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <style>
-        table {
-          font-family: Arial, sans-serif;
-          border-collapse: collapse;
-          width: 100%;
-        }
-        td, th {
-          border: 1px solid #dddddd;
-          text-align: center;
-          padding: 8px;
-        }
-        tr:nth-child(even) {
-          background-color: #f9f9f9;
-        }
-        .summary-box {
-          margin-top: 20px;
-          padding: 10px;
-          border: 1px solid #000;
-          text-align: center;
-          font-size: 18px;
-          font-weight: bold;
-          background-color: #f0f0f0;
-          width: fit-content;
-          margin-left: auto;
-          margin-right: auto;
-        }
-      </style>
-    </head>
-    <body>
-      <h2>Usage Data</h2>
-      <table>
-        <tr>
-          <th>Day</th>
-          <th>Time Interval</th>
-        </tr>
-  )rawliteral";
-
-  const char* days[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+  const int totalSlots = 7 * 96;
+  int activeSlots = 0;
 
   for (int day = 0; day < 7; day++) {
-    int startSlot = -1;  // Start slot of a usage block
-    for (int slot = 0; slot < 96; slot++) {
-      if (Core::usagePattern[day][slot] > 0) {
-        totalActiveMinutes += 15;  // Count each active 15-min slot
-        if (startSlot == -1) {
-          startSlot = slot; // Start new usage block
-        }
-      } else if (startSlot != -1) {
-        // End of a usage block, add it to HTML
-        int startHour = (startSlot * 15) / 60;
-        int startMinute = (startSlot * 15) % 60;
-        int endHour = (slot * 15) / 60;
-        int endMinute = (slot * 15) % 60;
-
-        html += "<tr>";
-        html += "<td>" + String(days[day]) + "</td>";
-        html += "<td>" + String(startHour) + ":" + (startMinute < 10 ? "0" : "") + String(startMinute) + " - ";
-        html += String(endHour) + ":" + (endMinute < 10 ? "0" : "") + String(endMinute) + "</td>";
-        html += "</tr>";
-
-        startSlot = -1; // Reset for the next block
+      for (int slot = 0; slot < 96; slot++) {
+          if (Core::usagePattern[day][slot] > 0) {
+              activeSlots++;
+          }
       }
-    }
-
-    // If the last slot was a usage slot, close the block
-    if (startSlot != -1) {
-      int startHour = (startSlot * 15) / 60;
-      int startMinute = (startSlot * 15) % 60;
-      int endHour = 23;
-      int endMinute = 59;
-
-      html += "<tr>";
-      html += "<td>" + String(days[day]) + "</td>";
-      html += "<td>" + String(startHour) + ":" + (startMinute < 10 ? "0" : "") + String(startMinute) + " - ";
-      html += String(endHour) + ":" + (endMinute < 10 ? "0" : "") + String(endMinute) + "</td>";
-      html += "</tr>";
-    }
   }
 
-  // **Calculate total pump runtime**
-  float totalHours = totalActiveMinutes / 60.0;
-  float percentage = (totalActiveMinutes / 10080.0) * 100.0; // 10080 minutes in a week
+  float weeklyPercentage = activeSlots * 100.0 / totalSlots;
 
-  html += R"rawliteral(
-      </table>
-      <div class="summary-box">
-        <p><strong>Total Pump Running Time:</strong> )rawliteral" + 
-        String(totalHours, 1) + " hours per week (" + String(percentage, 1) + "%)</p>" + 
-        R"rawliteral(</div>
-      <br>
-      <a href="/">Back to Home</a>
-    </body>
-    </html>
-  )rawliteral";
-
-  server.send(200, "text/html", html);
+  String json = "{";
+  json += "\"weekly_percentage\": " + String(weeklyPercentage, 2) + ",";
+  json += "\"hit_percentage\": " + String(hitPercentage, 2) + ",";
+  json += "\"miss_percentage\": " + String(missPercentage, 2) + ",";
+  json += "\"waste_percentage\": " + String(wastePercentage, 2);
+  json += "}";
+  return json;
 }
-
 
 void webserversetup()
 {
@@ -250,6 +172,11 @@ void webserversetup()
       });
       
       
+      server.on("/getstats", HTTP_GET, []() {
+        server.send(200, "application/json", getStatistics());
+      });
+    
+
       server.on("/timeconfig", HTTP_GET, []() {
         String html = R"rawliteral(
             <!DOCTYPE html>
@@ -368,8 +295,114 @@ void webserversetup()
             ESP.restart();
         });
       
-        server.on("/visualize", HTTP_GET, generateVisualizationPage);
+        server.on("/visualize", HTTP_GET, []() {
+          server.send(200, "text/html", R"rawliteral(
+              <!DOCTYPE html>
+              <html>
+              <head>
+                  <style>
+                      .table-container {
+                          display: block;
+                          overflow-x: auto;
+                          white-space: nowrap;
+                          position: relative;
+                          padding: 10px;
+                          margin-left: auto;
+                          margin-right: auto;
+                      }
+                      table {
+                          font-family: Arial, sans-serif;
+                          border-collapse: collapse;
+                          margin: 0 auto;
+                          width: 100%;
+                          table-layout: fixed; /* Ensures even column widths */
+                      }
+                      td, th {
+                          border: 1px solid #dddddd;
+                          text-align: center;
+                          padding: 4px;
+                          width: 10px; /* More compact fixed width */
+                      }
+                      th.full-hour, td.full-hour {
+                          border-left: 2px solid black !important; /* Only full-hour borders */
+                      }
+                      tr:nth-child(odd) {
+                          background-color: #f2f2f2;
+                      }
+                      tr:nth-child(even) {
+                          background-color: #ffffff;
+                      }
+                      .sticky-col {
+                          position: sticky;
+                          left: 0;
+                          background: inherit;
+                          z-index: 2;
+                          font-weight: bold;
+                          min-width: 90px; /* Wider for weekday names */
+                      }
+                      th {
+                          position: sticky;
+                          top: 0;
+                          background: #e6e6e6;
+                          z-index: 3;
+                      }
+                      td:not(.full-hour), th:not(.full-hour) {
+                          border-left: none !important; /* Remove vertical borders except full hours */
+                      }
+                      .hour-label {
+                          text-align: center;
+                          font-weight: bold;
+                      }
+                  </style>
+                  <script>
+                      document.addEventListener("DOMContentLoaded", function () {
+                          fetchVisualizationData();
+                      });
       
+                      function fetchVisualizationData() {
+                          fetch('/getgrid')
+                              .then(response => response.json())
+                              .then(data => {
+                                  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                                  let html = '<table><tr><th class="sticky-col">Day</th>';
+      
+                                  // Generate headers for time slots (span 4 columns per hour)
+                                  for (let i = 0; i < 24; i++) {
+                                      html += `<th class="full-hour hour-label" colspan="4">${i}:00</th>`;
+                                  }
+                                  html += '</tr>';
+      
+                                  // Generate usage data (readonly, only highlights yellow)
+                                  for (let day = 0; day < 7; day++) {
+                                      html += `<tr><td class="sticky-col">${days[day]}</td>`;
+                                      for (let slot = 0; slot < 96; slot++) {
+                                          let extraClass = (slot % 4 === 0) ? "full-hour" : "";
+                                          let color = (data[day][slot] > 0) ? "background-color: yellow;" : "";
+                                          html += `<td class="${extraClass}" style="${color}"></td>`;
+                                      }
+                                      html += '</tr>';
+                                  }
+      
+                                  html += '</table>';
+                                  document.getElementById("visualizationContainer").innerHTML = html;
+                              })
+                              .catch(error => console.error('Error fetching grid data:', error));
+                      }
+                  </script>
+              </head>
+              <body>
+                  <h2>Usage Visualization</h2>
+                  <div class="table-container" id="visualizationContainer">
+                      <p>Loading data...</p>
+                  </div>
+                  <br>
+                  <a href="/">Back to Home</a>
+              </body>
+              </html>
+          )rawliteral");
+      });
+              
+
         server.on("/save", HTTP_POST, []() {
           String newSSID = server.arg("ssid");
           String newPassword = server.arg("password");
@@ -694,7 +727,17 @@ void webserversetup()
                   })
                   .catch(error => console.error('Error fetching status:', error));
               }
-      
+              function updateStatistics() {
+                  fetch('/getstats')
+                      .then(response => response.json())
+                      .then(data => {
+                          document.getElementById('weekly_percentage').innerText = data.weekly_percentage + "%";
+                          document.getElementById('hit_percentage').innerText = data.hit_percentage + "%";
+                          document.getElementById('miss_percentage').innerText = data.miss_percentage + "%";
+                          document.getElementById('waste_percentage').innerText = data.waste_percentage + "%";
+                      })
+                      .catch(error => console.error('Error fetching statistics:', error));
+              }      
               function restartESP() {
                   if (confirm('Are you sure you want to restart the device?')) {
                       fetch('/restart', { method: 'POST' })
@@ -705,6 +748,7 @@ void webserversetup()
               }        
       
               setInterval(updateStatus, 3000); // Fetch all data every 3 seconds
+              setInterval(updateStatistics, 10000);
             </script>
           </head>
           <body>
@@ -716,6 +760,10 @@ void webserversetup()
               <p><strong>Current Temperature:</strong> <span id="currentAvgTemp">Loading...</span></p>
               <p><strong>Delta Temperature:</strong> <span id="deltaTemp">Loading...</span></p>
               <p><strong>Pump Status:</strong> <span id="pumpStatus">Loading...</span></p>
+              <p><strong>Pump running Weekly Percentage:</strong> <span id="weekly_percentage">0%</span></p>
+              <p><strong>Pump Hit Percentage:</strong> <span id="hit_percentage">0%</span></p>
+              <p><strong>Pump Miss Percentage:</strong> <span id="miss_percentage">0%</span></p>
+              <p><strong>Wasted Pump Usage:</strong> <span id="waste_percentage">0%</span></p>              
               <p><button onclick="restartESP()">Restart</button></p>
             </div>
             <br>

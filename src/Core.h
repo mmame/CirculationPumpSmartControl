@@ -33,6 +33,13 @@ struct Core {
     // Usage pattern (7 days x 96 slots for 15-minute intervals)
     static int usagePattern[7][96];
 
+    // Statistical counters
+    static unsigned long pumpRunTime; // Time in seconds
+    static unsigned long lastPumpStart;
+    static unsigned int hotWaterUsedWithPump;
+    static unsigned int hotWaterUsedWithoutPump;
+    static unsigned int pumpRunWithoutUsage;
+
     // Functions
     static void begin();
     static void initRTC();

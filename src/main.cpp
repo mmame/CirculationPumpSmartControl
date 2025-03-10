@@ -43,6 +43,8 @@ const char* ntpServer = "pool.ntp.org";
 // GPIO Pins
 #define PUMP_RELAY_PIN 27
 #define ONE_WIRE_BUS 32  // GPIO for DS18B20 sensor
+#define CUSTOM_SDA 21
+#define CUSTOM_SCL 22
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
@@ -54,13 +56,6 @@ int numReadings = 0;
 unsigned long cycleStartTime = 0;
 bool measuring = false;
 bool sleepPhase = false;
-
-// Timer
-unsigned long lastSampleTime = 0;
-const unsigned long sampleInterval = 900000; // 15 minutes
-
-#define CUSTOM_SDA 21
-#define CUSTOM_SCL 22
 
 void setup() {
   Serial.begin(115200);
@@ -188,11 +183,7 @@ void loop() {
   
   temperatureMeasurement();
 
-  // Update usage patterns every 15 minutes
-  if (millis() - lastSampleTime > sampleInterval) {
-    lastSampleTime = millis();
-    updateUsagePattern();
-  }
+  updateUsagePattern();
 
   // Activate or deactivate pump based on the usage pattern
   int currentDay = getCurrentDay();
@@ -395,31 +386,31 @@ void loadWiFiCredentials() {
 
 void recordUsage() {
   if (!time(nullptr) || time(nullptr) < 100000) {
-    Serial.println("Time not synchronized, skipping usage record.");
-    return;
+      Serial.println("Time not synchronized, skipping usage record.");
+      return;
   }
 
   if (slotRecorded) {
-    return;
+      return;
   }
 
-  // Get current local time
   struct tm timeinfo;
   getLocalTime(&timeinfo);
+  int currentDay = timeinfo.tm_wday;
+  int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15);
 
-  int currentDay = timeinfo.tm_wday; // Local day (0 = Sunday, ..., 6 = Saturday)
-  int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15); // Local 15-min slot index
-
-  // Update the current slot now
   Core::usagePattern[currentDay][currentSlot] = min(255, Core::usagePattern[currentDay][currentSlot] + IncreaseOnUsage);
 
-  // Save the updated usage pattern
-  saveUsagePattern();
-  Serial.printf("Usage recorded: Day %d, Slot %d, Value %d\n", currentDay, currentSlot, Core::usagePattern[currentDay][currentSlot]);
+  // Check hit/miss conditions
+  if (Core::pumpActivated) {
+      Core::hotWaterUsedWithPump++;
+  } else {
+      Core::hotWaterUsedWithoutPump++;
+  }
 
   slotRecorded = true;
+  saveUsagePattern();
 }
-
 
 void updateUsagePattern() {
   static int lastSlot = -1;
@@ -428,32 +419,15 @@ void updateUsagePattern() {
   int currentSlot = getCurrentTimeSlot();
   int currentDay = getCurrentDay();
 
-  if (currentSlot != lastSlot) {  // Timeslot changed
-    if (lastSlot != -1 && !slotRecorded) {  // If last slot exists and no usage was recorded
-      int targetDay = lastDay;  // Default: Decrement the previous slot of the same day
-      int targetSlot = lastSlot;
-
-      // Handle day overflow (previous slot was 95, new slot is 0 → move to the previous day)
-      if (currentSlot == 0) {
-        targetDay = (currentDay == 0) ? 6 : currentDay - 1;  // Wrap to previous day (Sunday → Saturday)
-        targetSlot = 95;  // Last slot of the previous day
+  if (currentSlot != lastSlot) {
+      if (lastSlot != -1 && !slotRecorded) {
+          Core::pumpRunWithoutUsage++;  // Pump was running, but no usage detected
       }
 
-      if(Core::usagePattern[targetDay][targetSlot] > 0)
-      {
-        Core::usagePattern[targetDay][targetSlot] = max(0, Core::usagePattern[targetDay][targetSlot]--);
-        Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count to %d.\n", targetSlot, targetDay, Core::usagePattern[targetDay][targetSlot]);
-      }
-    }
-
-    // Reset for the new timeslot
-    slotRecorded = false;
-    lastSlot = currentSlot;
-    lastDay = currentDay;
-    Serial.printf("New timeslot detected: Slot %d on Day %d\n", currentSlot, currentDay);
+      slotRecorded = false;
+      lastSlot = currentSlot;
+      lastDay = currentDay;
   }
-
-  saveUsagePattern();
 }
 
 int getCurrentDay() {
@@ -478,22 +452,26 @@ bool shouldActivatePump(int day, int slot) {
 
 
 void activatePump() {
-  if(!Core::pumpActivated)
-  {
-    digitalWrite(PUMP_RELAY_PIN, HIGH);
-    Core::pumpActivated = true;
-    Serial.println("Pump activated");
+  if (!Core::pumpActivated) {
+      digitalWrite(PUMP_RELAY_PIN, HIGH);
+      Core::pumpActivated = true;
+      Core::lastPumpStart = millis(); // Record pump start time
+      Serial.println("Pump activated");
   }
 }
 
 void deactivatePump() {
-  if(Core::pumpActivated)
-  {
-    digitalWrite(PUMP_RELAY_PIN, LOW);
-    Core::pumpActivated = false;
-    Serial.println("Pump deactivated");
+  if (Core::pumpActivated) {
+      digitalWrite(PUMP_RELAY_PIN, LOW);
+      Core::pumpActivated = false;
+
+      // Calculate running time
+      unsigned long elapsed = (millis() - Core::lastPumpStart) / 1000; // Convert to seconds
+      Core::pumpRunTime += elapsed;
+      Serial.printf("Pump deactivated. Total runtime: %lu seconds\n", Core::pumpRunTime);
   }
 }
+
 
 void saveUsagePattern() {
   Core::preferences.putBytes("usagePattern", Core::usagePattern, sizeof(Core::usagePattern));
