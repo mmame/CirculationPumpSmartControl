@@ -435,12 +435,12 @@ void updateUsagePattern() {
               saveUsagePattern();
               Serial.printf("No usage detected in Slot %d of Day %d → Decrementing usage count to %d.\n", 
                              lastSlot, lastDay, Core::usagePattern[lastDay][lastSlot]);
-          }
 
-          // Track "pump running without usage" statistics
-          Core::pumpRunWithoutUsage++;  
-          Serial.printf("Pump was running without usage in Slot %d on Day %d → Count: %d\n", 
-                         lastSlot, lastDay, Core::pumpRunWithoutUsage);
+              // Track "pump running without usage" statistics
+              Core::pumpRunWithoutUsage++;  
+              Serial.printf("Pump was running without usage in Slot %d on Day %d → Count: %d\n", 
+                            lastSlot, lastDay, Core::pumpRunWithoutUsage);
+          }
       }
 
       // Reset for the new timeslot
