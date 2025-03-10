@@ -186,12 +186,15 @@ void loop() {
   updateUsagePattern();
 
   // Activate or deactivate pump based on the usage pattern
-  int currentDay = getCurrentDay();
-  int currentSlot = getCurrentTimeSlot();
-  if (shouldActivatePump(currentDay, currentSlot)) {
-    activatePump();
-  } else {
-    deactivatePump();
+  if (time(nullptr) > 100000)
+  {
+    int currentDay = getCurrentDay();
+    int currentSlot = getCurrentTimeSlot();
+    if (shouldActivatePump(currentDay, currentSlot)) {
+      activatePump();
+    } else {
+      deactivatePump();
+    }
   }
 }
 
@@ -264,7 +267,7 @@ void temperatureMeasurement() {
 }
 
 void startAccessPoint() {
-  WiFi.softAP("CirculationPumpSmartControl", "12345678");
+  WiFi.softAP("CirculationPumpSmartControl");
   Serial.printf("Access Point IP: %s\n", WiFi.softAPIP().toString().c_str());
 }
 
@@ -415,6 +418,11 @@ void recordUsage() {
 void updateUsagePattern() {
   static int lastSlot = -1;
   static int lastDay = -1;
+
+  if (!time(nullptr) || time(nullptr) < 100000)
+  {
+    return;
+  }
 
   int currentSlot = getCurrentTimeSlot();
   int currentDay = getCurrentDay();
