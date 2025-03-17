@@ -150,37 +150,40 @@ void loop() {
       return;  // Skip the rest of the loop
   }
 
-  if (strlen(ssid) > 0 && WiFi.status() != WL_CONNECTED) {
-    unsigned long currentMillis = millis();
-    
-    if (currentMillis - lastReconnectAttempt >= 20000) {
-        Serial.println("Wi-Fi lost. Reconnecting...");
-        lastReconnectAttempt = currentMillis;  // Update last attempt time
-
-        if (WiFi.reconnect()) {
-            wifiConnecting = true;
-        }
-    }
-  }
-
-  if (wifiConnecting && WiFi.status() == WL_CONNECTED) {
-      wifiConnecting = false;
-      Serial.println("Wi-Fi reconnected successfully.");
-      server.begin();
-      setupOTA();
-  }
-    
-  if(WiFi.status() == WL_CONNECTED)
+  if(strlen(ssid) > 0)
   {
-    // Periodically update the timezone and resync time
-    if (millis() - lastTimeSync > 86400000) { 
-      synchronizeTime();
-      lastTimeSync = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      unsigned long currentMillis = millis();
+      
+      if (currentMillis - lastReconnectAttempt >= 20000) {
+          Serial.println("Wi-Fi lost. Reconnecting...");
+          lastReconnectAttempt = currentMillis;  // Update last attempt time
+
+          if (WiFi.reconnect()) {
+              wifiConnecting = true;
+          }
+      }
     }
 
-    server.handleClient();
+    if (wifiConnecting && WiFi.status() == WL_CONNECTED) {
+        wifiConnecting = false;
+        Serial.println("Wi-Fi reconnected successfully.");
+        server.begin();
+        setupOTA();
+    }
+      
+    if(WiFi.status() == WL_CONNECTED)
+    {
+      // Periodically update the timezone and resync time
+      if (millis() - lastTimeSync > 86400000) { 
+        synchronizeTime();
+        lastTimeSync = millis();
+      }
+    }
   }
-  
+
+  server.handleClient();
+
   temperatureMeasurement();
 
   updateUsagePattern();
@@ -281,28 +284,34 @@ void logCurrentTime() {
 
 
 void synchronizeTime() {
-  Serial.println("Synchronizing time with NTP...");
+  if(strlen(ssid) > 0)
+  {
+    Serial.println("Synchronizing time with NTP...");
 
-  configTime(0, 0, "pool.ntp.org");
+    configTime(0, 0, "pool.ntp.org");
 
-  time_t now = time(nullptr);
-  for (int i = 0; i < 20; i++) {
-      if (now > 100000) break;
-      delay(500);
-      now = time(nullptr);
-  }
+    time_t now = time(nullptr);
+    for (int i = 0; i < 20; i++) {
+        if (now > 100000) break;
+        delay(500);
+        now = time(nullptr);
+    }
 
-  if (now > 100000) {
-      Serial.println("Time synchronized with NTP.");
-      
-      fetchAndSetTimezone();
+    if (now > 100000) {
+        Serial.println("Time synchronized with NTP.");
+        
+        fetchAndSetTimezone();
 
-      if (Core::rtcAvailable) {
-          Core::rtc.adjust(DateTime(now));  // Store in RTC if available
-          Serial.println("RTC updated with NTP time.");
-      }
-  } else {
-      Serial.println("Failed to sync with NTP.");
+        if (Core::rtcAvailable) {
+            Core::rtc.adjust(DateTime(now));  // Store in RTC if available
+            Serial.println("RTC updated with NTP time.");
+        }
+    } else {
+        Serial.println("Failed to sync with NTP.");
+    }
+  } else 
+  {
+    Serial.println("Failed to sync with NTP.");
   }
 }
 

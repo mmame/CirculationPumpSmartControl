@@ -272,25 +272,51 @@ void webserversetup()
       });
       
       
-        server.on("/wificonfig", HTTP_GET, []() {
-          server.send(200, "text/html", R"rawliteral(
-            <!DOCTYPE html>
-            <html>
-            <body>
-              <h2>WiFi Configuration</h2>
-              <form action="/save" method="POST">
-                <label for="ssid">SSID:</label><br>
-                <input type="text" id="ssid" name="ssid"><br><br>
-                <label for="password">Password:</label><br>
-                <input type="password" id="password" name="password"><br><br>
-                <input type="submit" value="Save">
-              </form>
-              <br>
-              <a href='/'>Back to Home</a>
-            </body>
-            </html>
-          )rawliteral");
-        });
+      server.on("/wificonfig", HTTP_GET, []() {
+        server.send(200, "text/html", R"rawliteral(
+          <!DOCTYPE html>
+          <html>
+          <body>
+            <h2>WiFi Configuration</h2>
+            <form action="/save" method="POST">
+              <label for="ssid">SSID:</label><br>
+              <input type="text" id="ssid" name="ssid"><br><br>
+              <label for="password">Password:</label><br>
+              <input type="password" id="password" name="password"><br><br>
+              <input type="submit" value="Save">
+            </form>
+            <br>
+            <form action="/resetwifi" method="POST">
+              <input type="submit" value="Reset to AP Mode" style="background-color:red; color:white; padding:10px;">
+            </form>
+            <br>
+            <a href='/'>Back to Home</a>
+          </body>
+          </html>
+        )rawliteral");
+      });
+      
+      server.on("/save", HTTP_POST, []() {
+        String newSSID = server.arg("ssid");
+        String newPassword = server.arg("password");
+      
+        if (newSSID.length() > 0 && newPassword.length() > 0) {
+          saveWiFiCredentials(newSSID, newPassword);
+          server.send(200, "text/html", "<h2>WiFi credentials saved! Restarting...</h2>");
+          delay(2000);
+          ESP.restart();
+        } else {
+          server.send(400, "text/html", "<h2>Error: SSID or Password is empty!</h2>");
+        }
+      });
+      
+      // Handle Reset to AP Mode
+      server.on("/resetwifi", HTTP_POST, []() {
+        saveWiFiCredentials(String(), String());
+        server.send(200, "text/html", "<h2>Device reset to AP mode! Restarting...</h2>");
+        delay(2000);
+        ESP.restart();
+      });
       
         server.on("/restart", HTTP_POST, []() {
             server.send(200, "text/plain", "Restarting...");
@@ -403,23 +429,7 @@ void webserversetup()
               </body>
               </html>
           )rawliteral");
-      });
-              
-
-        server.on("/save", HTTP_POST, []() {
-          String newSSID = server.arg("ssid");
-          String newPassword = server.arg("password");
-      
-          if (newSSID.length() > 0 && newPassword.length() > 0) {
-            saveWiFiCredentials(newSSID, newPassword);
-            server.send(200, "text/html", "<h2>WiFi credentials saved! Restarting...</h2>");
-            delay(2000);
-            ESP.restart();
-          } else {
-            server.send(400, "text/html", "<h2>Error: SSID or Password is empty!</h2>");
-          }
-        });
-      
+      });   
       
       server.on("/update", HTTP_GET, []() {
         server.send(200, "text/html", R"rawliteral(
