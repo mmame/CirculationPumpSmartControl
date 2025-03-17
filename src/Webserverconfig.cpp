@@ -475,169 +475,188 @@ void webserversetup()
       
       server.on("/grid", HTTP_GET, []() {
         server.send(200, "text/html", R"rawliteral(
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    .table-container {
-                        display: block;
-                        overflow-x: auto;
-                        white-space: nowrap;
-                        position: relative;
-                        padding: 10px;
-                        margin-left: auto;
-                        margin-right: auto;
-                    }
-                    table {
-                        font-family: Arial, sans-serif;
-                        border-collapse: collapse;
-                        margin: 0 auto;
-                        width: max-content;
-                    }
-                    td, th {
-                        border: 1px solid #dddddd;
-                        text-align: center;
-                        padding: 4px;
-                    }
-                    th.full-hour, td.full-hour {
-                        border-left: 3px solid black !important; /* Thicker border for full hours */
-                    }
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <style>
+                  .table-container {
+                      display: block;
+                      overflow-x: auto;
+                      white-space: nowrap;
+                      position: relative;
+                      padding: 10px;
+                      margin-left: auto;
+                      margin-right: auto;
+                  }
+                  table {
+                      font-family: Arial, sans-serif;
+                      border-collapse: collapse;
+                      margin: 0 auto;
+                      width: max-content;
+                  }
+                  td, th {
+                      border: 1px solid #dddddd;
+                      text-align: center;
+                      padding: 4px;
+                  }
+                  th.full-hour, td.full-hour {
+                      border-left: 3px solid black !important; /* Thicker border for full hours */
+                  }
+                  tr:nth-child(odd) {
+                      background-color: #f2f2f2;
+                  }
+                  tr:nth-child(even) {
+                      background-color: #ffffff;
+                  }
+                  input {
+                      width: 30px;
+                      text-align: center;
+                  }
+                  .button-container {
+                      display: flex;
+                      flex-direction: column;
+                  }
+                  .column-btn {
+                      font-size: 12px;
+                      padding: 2px;
+                      margin: 1px;
+                      cursor: pointer;
+                      width: 100%;
+                  }
+                  .save-button-container {
+                      text-align: center;
+                      margin-top: 20px;
+                      display: flex;
+                      justify-content: center;
+                      gap: 15px;
+                  }
+                  .save-button-container button {
+                      font-size: 16px;
+                      padding: 10px 20px;
+                      width: auto;
+                      height: 50px;
+                      box-sizing: border-box;
+                  }
+                  .reset-button {
+                      color: white;
+                      background-color: red;
+                      border: none;
+                      cursor: pointer;
+                  }
+                  .reset-button:hover {
+                      background-color: darkred;
+                  }
+                  th:first-child, td:first-child {
+                      position: sticky;
+                      left: 0;
+                      background: inherit;
+                      z-index: 2;
+                  }
+                  th {
+                      position: sticky;
+                      top: 0;
+                      background: #e6e6e6;
+                      z-index: 3;
+                  }
+              </style>
+              <script>
+                  document.addEventListener("DOMContentLoaded", function () {
+                      fetchGridData();
+                  });
 
-                    /* --- Alternating Row Colors for Readability --- */
-                    tr:nth-child(odd) {
-                        background-color: #f2f2f2; /* Light gray */
-                    }
-                    
-                    tr:nth-child(even) {
-                        background-color: #ffffff; /* white */
-                    }
-                    input {
-                        width: 30px;
-                        text-align: center;
-                    }
-                    .save-button-container {
-                        text-align: center;
-                        margin-top: 20px;
-                        display: flex;
-                        justify-content: center;
-                        gap: 15px;
-                    }
-                    .save-button-container button {
-                        font-size: 16px;
-                        padding: 10px 20px;
-                        width: auto;
-                        height: 50px;
-                        box-sizing: border-box;
-                    }
-                    .reset-button {
-                        color: white;
-                        background-color: red;
-                        border: none;
-                        cursor: pointer;
-                    }
-                    .reset-button:hover {
-                        background-color: darkred;
-                    }
+                  function fetchGridData() {
+                      fetch('/getgrid')
+                          .then(response => response.json())
+                          .then(data => {
+                              const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+                              let html = '<form id="gridForm"><table><tr><th>Day</th>';
 
-                    /* --- Sticky First Column (Weekdays) --- */
-                    th:first-child, td:first-child {
-                        position: sticky;
-                        left: 0;
-                        background: inherit; /* Inherit background color from the row */
-                        z-index: 2;
-                    }
-                    /* Keep header fixed at the top */
-                    th {
-                        position: sticky;
-                        top: 0;
-                        background: #e6e6e6; /* Slightly darker background for contrast */
-                        z-index: 3;
-                    }
-                </style>
-                <script>
-                    document.addEventListener("DOMContentLoaded", function () {
-                        fetchGridData();
-                    });
-      
-                    function fetchGridData() {
-                        fetch('/getgrid')
-                            .then(response => response.json())
-                            .then(data => {
-                                const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-                                let html = '<form id="gridForm"><table><tr><th>Day</th>';
-      
-                                // Generate time slot headers
-                                for (let i = 0; i < 96; i++) {
-                                    if (i % 4 === 0) {
-                                        html += `<th class="full-hour">${Math.floor(i / 4)}:00</th>`;
-                                    } else {
-                                        html += "<th></th>";
-                                    }
-                                }
-                                html += '</tr>';
-      
-                                // Generate grid rows with input fields
-                                for (let day = 0; day < 7; day++) {
-                                    html += `<tr><td>${days[day]}</td>`;
-                                    for (let slot = 0; slot < 96; slot++) {
-                                        let extraClass = (slot % 4 === 0) ? "full-hour" : "";
-                                        html += `<td class="${extraClass}"><input type="number" size="2" name="slot${day}_${slot}" value="${data[day][slot]}" min="0" max="255"></td>`;
-                                    }
-                                    html += '</tr>';
-                                }
-                                html += '</table></form>';
-      
-                                document.getElementById("gridContainer").innerHTML = html;
-                                highlightNonZeroValues();
-                            })
-                            .catch(error => console.error('Error fetching grid data:', error));
-                    }
-      
-                    function highlightNonZeroValues() {
-                        document.querySelectorAll('input[type="number"]').forEach(input => {
-                            input.style.backgroundColor = (parseInt(input.value) > 0) ? 'yellow' : '';
-                        });
-                    }
-      
-                    function saveGridData() {
-                        const formData = new FormData(document.getElementById("gridForm"));
-                        fetch('/savegrid', {
-                            method: 'POST',
-                            body: new URLSearchParams(formData) // Convert form data to a URL-encoded string
-                        }).then(response => {
-                            if (response.ok) {
-                                alert("Grid saved successfully!");
-                                highlightNonZeroValues();
-                            } else {
-                                alert("Error saving grid!");
-                            }
-                        }).catch(error => {
-                            alert("Error: " + error);
-                        });
-                    }
-      
-                    function confirmReset() {
-                        if (confirm('Are you sure you want to reset the entire grid?')) {
-                            fetch('/resetgrid', { method: 'POST' })
-                                .then(response => response.ok ? fetchGridData() : alert('Failed to reset grid'))
-                                .catch(error => alert('Error resetting grid: ' + error));
-                        }
-                    }
-                </script>
-            </head>
-            <body>
-                <h2>Edit Usage Grid</h2>
-                <div class="table-container" id="gridContainer">
-                    <p>Loading grid...</p>
-                </div>
-                <div class="save-button-container">
-                    <button type="button" onclick="saveGridData()">Save</button>
-                    <button type="button" class="reset-button" onclick="confirmReset()">Reset All</button>
-                </div>
-                <br>
-                <a href='/'>Back to Home</a>
-            </body>
-            </html>
+                              // Generate column header with + / - buttons
+                              for (let i = 0; i < 96; i++) {
+                                  let timeLabel = (i % 4 === 0) ? `<span>${Math.floor(i / 4)}:00</span>` : '';
+                                  html += `<th class="full-hour">
+                                              <div class="button-container">
+                                                  <button type="button" class="column-btn" onclick="changeColumn(${i}, 1)">+</button>
+                                                  <button type="button" class="column-btn" onclick="changeColumn(${i}, -1)">&minus;</button>
+                                                  ${timeLabel}
+                                              </div>
+                                          </th>`;
+                              }
+                              html += '</tr>';
+
+                              // Generate grid rows with input fields
+                              for (let day = 0; day < 7; day++) {
+                                  html += `<tr><td>${days[day]}</td>`;
+                                  for (let slot = 0; slot < 96; slot++) {
+                                      let extraClass = (slot % 4 === 0) ? "full-hour" : "";
+                                      html += `<td class="${extraClass}"><input type="number" size="2" name="slot${day}_${slot}" id="slot${day}_${slot}" value="${data[day][slot]}" min="0" max="255"></td>`;
+                                  }
+                                  html += '</tr>';
+                              }
+                              html += '</table></form>';
+
+                              document.getElementById("gridContainer").innerHTML = html;
+                              highlightNonZeroValues();
+                          })
+                          .catch(error => console.error('Error fetching grid data:', error));
+                  }
+
+                  function highlightNonZeroValues() {
+                      document.querySelectorAll('input[type="number"]').forEach(input => {
+                          input.style.backgroundColor = (parseInt(input.value) > 0) ? 'yellow' : '';
+                      });
+                  }
+
+                  function saveGridData() {
+                      const formData = new FormData(document.getElementById("gridForm"));
+                      fetch('/savegrid', {
+                          method: 'POST',
+                          body: new URLSearchParams(formData)
+                      }).then(response => {
+                          if (response.ok) {
+                              alert("Grid saved successfully!");
+                              highlightNonZeroValues();
+                          } else {
+                              alert("Error saving grid!");
+                          }
+                      }).catch(error => {
+                          alert("Error: " + error);
+                      });
+                  }
+
+                  function confirmReset() {
+                      if (confirm('Are you sure you want to reset the entire grid?')) {
+                          fetch('/resetgrid', { method: 'POST' })
+                              .then(response => response.ok ? fetchGridData() : alert('Failed to reset grid'))
+                              .catch(error => alert('Error resetting grid: ' + error));
+                      }
+                  }
+
+                  function changeColumn(colIndex, delta) {
+                      for (let day = 0; day < 7; day++) {
+                          let input = document.getElementById(`slot${day}_${colIndex}`);
+                          if (input) {
+                              let newValue = parseInt(input.value) + delta;
+                              input.value = Math.max(0, Math.min(255, newValue)); // Clamp between 0 and 255
+                          }
+                      }
+                      highlightNonZeroValues();
+                  }
+              </script>
+          </head>
+          <body>
+              <h2>Edit Usage Grid</h2>
+              <div class="table-container" id="gridContainer">
+                  <p>Loading grid...</p>
+              </div>
+              <div class="save-button-container">
+                  <button type="button" onclick="saveGridData()">Save</button>
+                  <button type="button" class="reset-button" onclick="confirmReset()">Reset All</button>
+              </div>
+              <br>
+              <a href='/'>Back to Home</a>
+          </body>
+          </html>
         )rawliteral");
       });
       
