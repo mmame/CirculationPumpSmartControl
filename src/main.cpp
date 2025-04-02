@@ -318,45 +318,50 @@ void synchronizeTime() {
 // Function to map timezone_name to POSIX TZ format
 String getPosixTZ(String timezoneName) {
   if (timezoneName == "UTC") return "UTC0";
-  if (timezoneName == "GMT") return "GMT0BST,M3.5.0/1,M10.5.0";
-  if (timezoneName == "CET") return "CET-1CEST,M3.5.0,M10.5.0/3";
+  if (timezoneName == "GMT") return "GMT0";
+  if (timezoneName == "BST") return "GMT0BST,M3.5.0/1,M10.5.0"; // UK time
+  if (timezoneName == "CET") return "CET-1CEST,M3.5.0,M10.5.0/3"; // Central Europe
   if (timezoneName == "CEST") return "CET-1CEST,M3.5.0,M10.5.0/3";
-  if (timezoneName == "EET") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
+  if (timezoneName == "EET") return "EET-2EEST,M3.5.0/3,M10.5.0/4"; // Eastern Europe
   if (timezoneName == "EEST") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
-  if (timezoneName == "MSK") return "MSK-3";
-  if (timezoneName == "IST") return "IST-5:30";
-  if (timezoneName == "WIB") return "WIB-7";
-  if (timezoneName == "WITA") return "WITA-8";
-  if (timezoneName == "WIT") return "WIT-9";
-  if (timezoneName == "JST") return "JST-9";
-  if (timezoneName == "KST") return "KST-9";
-  if (timezoneName == "CST") return "CST6CDT,M3.2.0,M11.1.0";
-  if (timezoneName == "CDT") return "CST6CDT,M3.2.0,M11.1.0";
-  if (timezoneName == "EST") return "EST5EDT,M3.2.0,M11.1.0";
+  if (timezoneName == "MSK") return "MSK-3"; // Moscow (no DST)
+  if (timezoneName == "IST") return "IST-5:30"; // India Standard Time
+  if (timezoneName == "PKT") return "PKT-5"; // Pakistan Standard Time
+  if (timezoneName == "BST6") return "BST-6"; // Bangladesh Standard Time (note: avoid "BST" ambiguity)
+  if (timezoneName == "WIB") return "WIB-7"; // Western Indonesia Time
+  if (timezoneName == "WITA") return "WITA-8"; // Central Indonesia Time
+  if (timezoneName == "WIT") return "WIT-9"; // Eastern Indonesia Time
+  if (timezoneName == "JST") return "JST-9"; // Japan Standard Time
+  if (timezoneName == "KST") return "KST-9"; // Korea Standard Time
+  if (timezoneName == "HKT") return "HKT-8"; // Hong Kong
+  if (timezoneName == "SGT") return "SGT-8"; // Singapore
+  if (timezoneName == "IRKT") return "IRKT-8"; // Irkutsk Time
+  if (timezoneName == "YAKT") return "YAKT-9"; // Yakutsk Time
+  if (timezoneName == "VLAT") return "VLAT-10"; // Vladivostok Time
+
+  // North America
+  if (timezoneName == "EST") return "EST5EDT,M3.2.0,M11.1.0"; // Eastern
   if (timezoneName == "EDT") return "EST5EDT,M3.2.0,M11.1.0";
-  if (timezoneName == "PST") return "PST8PDT,M3.2.0,M11.1.0";
-  if (timezoneName == "PDT") return "PST8PDT,M3.2.0,M11.1.0";
-  if (timezoneName == "MST") return "MST7MDT,M3.2.0,M11.1.0";
+  if (timezoneName == "CST") return "CST6CDT,M3.2.0,M11.1.0"; // Central
+  if (timezoneName == "CDT") return "CST6CDT,M3.2.0,M11.1.0";
+  if (timezoneName == "MST") return "MST7MDT,M3.2.0,M11.1.0"; // Mountain
   if (timezoneName == "MDT") return "MST7MDT,M3.2.0,M11.1.0";
-  if (timezoneName == "HST") return "HST10";
-  if (timezoneName == "AKST") return "AKST9AKDT,M3.2.0,M11.1.0";
+  if (timezoneName == "PST") return "PST8PDT,M3.2.0,M11.1.0"; // Pacific
+  if (timezoneName == "PDT") return "PST8PDT,M3.2.0,M11.1.0";
+  if (timezoneName == "AKST") return "AKST9AKDT,M3.2.0,M11.1.0"; // Alaska
   if (timezoneName == "AKDT") return "AKST9AKDT,M3.2.0,M11.1.0";
-  if (timezoneName == "AST") return "AST4ADT,M3.2.0,M11.1.0";
+  if (timezoneName == "HST") return "HST10"; // Hawaii (no DST)
+  if (timezoneName == "AST") return "AST4ADT,M3.2.0,M11.1.0"; // Atlantic
   if (timezoneName == "ADT") return "AST4ADT,M3.2.0,M11.1.0";
-  if (timezoneName == "NZST") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
-  if (timezoneName == "NZDT") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
-  if (timezoneName == "AEST") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
-  if (timezoneName == "AEDT") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
-  if (timezoneName == "ACST") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
+
+  // Australia & NZ
+  if (timezoneName == "AWST") return "AWST-8"; // Western Australia
+  if (timezoneName == "ACST") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3"; // Adelaide
   if (timezoneName == "ACDT") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
-  if (timezoneName == "AWST") return "AWST-8";
-  if (timezoneName == "BST") return "BST-6";
-  if (timezoneName == "PKT") return "PKT-5";
-  if (timezoneName == "HKT") return "HKT-8";
-  if (timezoneName == "SGT") return "SGT-8";
-  if (timezoneName == "IRKT") return "IRKT-8";
-  if (timezoneName == "YAKT") return "YAKT-9";
-  if (timezoneName == "VLAT") return "VLAT-10";
+  if (timezoneName == "AEST") return "AEST-10AEDT,M10.1.0,M4.1.0/3"; // Sydney
+  if (timezoneName == "AEDT") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+  if (timezoneName == "NZST") return "NZST-12NZDT,M9.5.0,M4.1.0/3"; // New Zealand
+  if (timezoneName == "NZDT") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
 
   return "UTC0";  // Default fallback
 }
