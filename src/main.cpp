@@ -320,7 +320,9 @@ String getPosixTZ(String timezoneName) {
   if (timezoneName == "UTC") return "UTC0";
   if (timezoneName == "GMT") return "GMT0BST,M3.5.0/1,M10.5.0";
   if (timezoneName == "CET") return "CET-1CEST,M3.5.0,M10.5.0/3";
+  if (timezoneName == "CEST") return "CET-1CEST,M3.5.0,M10.5.0/3";
   if (timezoneName == "EET") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
+  if (timezoneName == "EEST") return "EET-2EEST,M3.5.0/3,M10.5.0/4";
   if (timezoneName == "MSK") return "MSK-3";
   if (timezoneName == "IST") return "IST-5:30";
   if (timezoneName == "WIB") return "WIB-7";
@@ -329,15 +331,24 @@ String getPosixTZ(String timezoneName) {
   if (timezoneName == "JST") return "JST-9";
   if (timezoneName == "KST") return "KST-9";
   if (timezoneName == "CST") return "CST6CDT,M3.2.0,M11.1.0";
+  if (timezoneName == "CDT") return "CST6CDT,M3.2.0,M11.1.0";
   if (timezoneName == "EST") return "EST5EDT,M3.2.0,M11.1.0";
+  if (timezoneName == "EDT") return "EST5EDT,M3.2.0,M11.1.0";
   if (timezoneName == "PST") return "PST8PDT,M3.2.0,M11.1.0";
+  if (timezoneName == "PDT") return "PST8PDT,M3.2.0,M11.1.0";
   if (timezoneName == "MST") return "MST7MDT,M3.2.0,M11.1.0";
+  if (timezoneName == "MDT") return "MST7MDT,M3.2.0,M11.1.0";
   if (timezoneName == "HST") return "HST10";
   if (timezoneName == "AKST") return "AKST9AKDT,M3.2.0,M11.1.0";
+  if (timezoneName == "AKDT") return "AKST9AKDT,M3.2.0,M11.1.0";
   if (timezoneName == "AST") return "AST4ADT,M3.2.0,M11.1.0";
+  if (timezoneName == "ADT") return "AST4ADT,M3.2.0,M11.1.0";
   if (timezoneName == "NZST") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
+  if (timezoneName == "NZDT") return "NZST-12NZDT,M9.5.0,M4.1.0/3";
   if (timezoneName == "AEST") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
+  if (timezoneName == "AEDT") return "AEST-10AEDT,M10.1.0,M4.1.0/3";
   if (timezoneName == "ACST") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
+  if (timezoneName == "ACDT") return "ACST-9:30ACDT,M10.1.0,M4.1.0/3";
   if (timezoneName == "AWST") return "AWST-8";
   if (timezoneName == "BST") return "BST-6";
   if (timezoneName == "PKT") return "PKT-5";
@@ -360,11 +371,11 @@ void fetchAndSetTimezone() {
       DynamicJsonDocument doc(1024);
       deserializeJson(doc, payload);
       
-      String timezoneName = doc["timezone_name"].as<String>();
+      Core::timezoneName = doc["timezone_name"].as<String>();
       Serial.print("Timezone Name: ");
-      Serial.println(timezoneName);
+      Serial.println(Core::timezoneName);
 
-      String posixTZ = getPosixTZ(timezoneName);
+      String posixTZ = getPosixTZ(Core::timezoneName);
       Serial.print("POSIX Timezone: ");
       Serial.println(posixTZ);
 

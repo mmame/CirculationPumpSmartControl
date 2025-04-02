@@ -23,3 +23,4 @@ long unsigned  Core::lastPumpStart = 0;
 int unsigned  Core::hotWaterUsedWithPump = 0;
 int unsigned  Core::hotWaterUsedWithoutPump = 0;
 int unsigned  Core::pumpRunWithoutUsage = 0;
+String Core::timezoneName = "";

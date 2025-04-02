@@ -40,6 +40,8 @@ struct Core {
     static unsigned int hotWaterUsedWithoutPump;
     static unsigned int pumpRunWithoutUsage;
 
+    static String timezoneName;
+
     // Functions
     static void begin();
     static void initRTC();
