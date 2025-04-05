@@ -327,7 +327,7 @@ String getPosixTZ(String timezoneName) {
   if (timezoneName == "MSK") return "MSK-3"; // Moscow (no DST)
   if (timezoneName == "IST") return "IST-5:30"; // India Standard Time
   if (timezoneName == "PKT") return "PKT-5"; // Pakistan Standard Time
-  if (timezoneName == "BST6") return "BST-6"; // Bangladesh Standard Time (note: avoid "BST" ambiguity)
+  if (timezoneName == "+06") return "BST-6"; // Bangladesh Standard Time (note: avoid "BST" ambiguity)
   if (timezoneName == "WIB") return "WIB-7"; // Western Indonesia Time
   if (timezoneName == "WITA") return "WITA-8"; // Central Indonesia Time
   if (timezoneName == "WIT") return "WIT-9"; // Eastern Indonesia Time
@@ -337,7 +337,7 @@ String getPosixTZ(String timezoneName) {
   if (timezoneName == "SGT") return "SGT-8"; // Singapore
   if (timezoneName == "IRKT") return "IRKT-8"; // Irkutsk Time
   if (timezoneName == "YAKT") return "YAKT-9"; // Yakutsk Time
-  if (timezoneName == "VLAT") return "VLAT-10"; // Vladivostok Time
+  if (timezoneName == "VLAT") return "VLAT-10"; // Vladivostok Time  
 
   // North America
   if (timezoneName == "EST") return "EST5EDT,M3.2.0,M11.1.0"; // Eastern
