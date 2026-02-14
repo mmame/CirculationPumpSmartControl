@@ -6,6 +6,7 @@ Preferences Core::preferences;
 float Core::threshold = TempChangeThresholdDefault;
 unsigned long Core::measureDuration = MeasureDurationDefault;
 unsigned long Core::sleepDuration = SleepDurationDefault;
+unsigned int Core::increaseOnUsage = IncreaseOnUsageDefault;
 bool Core::pumpActivated = false;
 
 RTC_PCF8563 Core::rtc;

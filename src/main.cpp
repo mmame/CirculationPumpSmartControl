@@ -10,8 +10,6 @@
 
 #define MDNS_NAME "pump"
 
-#define IncreaseOnUsage 3
-
 // Forward declarations
 void startAccessPoint();
 void synchronizeTime();
@@ -89,6 +87,7 @@ void setup() {
   Core::threshold = Core::preferences.getFloat("threshold", TempChangeThresholdDefault);
   Core::measureDuration = Core::preferences.getUInt("measureDuration", MeasureDurationDefault);
   Core::sleepDuration = Core::preferences.getUInt("sleepDuration", SleepDurationDefault);
+  Core::increaseOnUsage = Core::preferences.getUInt("increaseOnUsage", IncreaseOnUsageDefault);
 
   // Load Wi-Fi credentials
   loadWiFiCredentials();
@@ -427,7 +426,7 @@ void recordUsage() {
   int currentDay = timeinfo.tm_wday;
   int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15);
 
-  Core::usagePattern[currentDay][currentSlot] = min(255, Core::usagePattern[currentDay][currentSlot] + IncreaseOnUsage);
+  Core::usagePattern[currentDay][currentSlot] = min(255, Core::usagePattern[currentDay][currentSlot] + (int)Core::increaseOnUsage);
 
   // Check hit/miss conditions
   if (Core::pumpActivated) {

@@ -11,6 +11,7 @@
 #define MeasureDurationDefault 5000
 #define SleepDurationDefault 25000
 #define TempChangeThresholdDefault 2.0
+#define IncreaseOnUsageDefault 5
 
 struct Core {
     // Preferences storage
@@ -20,6 +21,7 @@ struct Core {
     static float threshold;
     static unsigned long measureDuration;
     static unsigned long sleepDuration;
+    static unsigned int increaseOnUsage;
     static bool pumpActivated;
 
     // RTC variables
