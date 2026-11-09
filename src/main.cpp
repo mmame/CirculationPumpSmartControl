@@ -7,6 +7,8 @@
 #include <Wire.h>
 #include <ESPmDNS.h>
 #include "Webserverconfig.hpp"
+#include "Mqtt.h"
+#include "Stats.h"
 
 #define MDNS_NAME "pump"
 
@@ -120,6 +122,7 @@ void setup() {
 
   // Load usage patterns
   loadUsagePattern();
+  PumpStats::begin();
 
   sensors.begin();
   sensors.setResolution(11);
@@ -133,6 +136,8 @@ void setup() {
   // Set up web server endpoints
   webserversetup();
   server.begin();
+
+  PumpMqtt::begin();
 }
 
 void loop() {
@@ -182,6 +187,9 @@ void loop() {
   }
 
   server.handleClient();
+
+  PumpMqtt::loop();
+  PumpStats::tick(Core::pumpActivated);
 
   temperatureMeasurement();
 
@@ -237,6 +245,7 @@ void temperatureMeasurement() {
 
               if (Core::deltaT <= -Core::threshold) {
                   Serial.println(">>> Hot water usage detected! <<<");
+                  PumpStats::onUsageDetected(Core::pumpActivated);
                   recordUsage();  // Trigger logging & pump activation
               }
           }

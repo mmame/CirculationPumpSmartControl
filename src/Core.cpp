@@ -25,3 +25,26 @@ int unsigned  Core::hotWaterUsedWithPump = 0;
 int unsigned  Core::hotWaterUsedWithoutPump = 0;
 int unsigned  Core::pumpRunWithoutUsage = 0;
 String Core::timezoneName = "";
+
+int Core::enablePumpNow(String& message) {
+  if (pumpActivated) {
+    message = "Pump is already running";
+    return 400;
+  }
+  time_t now = time(nullptr);
+  if (now && now > 100000) {
+    struct tm timeinfo;
+    getLocalTime(&timeinfo);
+    int currentDay = timeinfo.tm_wday;
+    int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15);
+
+    // Increment usage pattern which will trigger pump activation
+    usagePattern[currentDay][currentSlot] = max(1, usagePattern[currentDay][currentSlot] + 1);
+    ::saveUsagePattern();  // global function (Core::saveUsagePattern is declared but not defined)
+
+    message = "Pump enabled for current time slot";
+    return 200;
+  }
+  message = "Time not synchronized";
+  return 500;
+}

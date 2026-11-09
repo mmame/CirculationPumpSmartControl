@@ -44,6 +44,10 @@ struct Core {
 
     static String timezoneName;
 
+    // Switch the pump on for the current 15 min slot (same as the web UI button).
+    // Returns the HTTP status code (200 ok, 400 already running, 500 time not synced).
+    static int enablePumpNow(String& message);
+
     // Functions
     static void begin();
     static void initRTC();

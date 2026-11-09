@@ -1,4 +1,6 @@
 #include "Webserverconfig.hpp"
+#include "Mqtt.h"
+#include "Stats.h"
 
 WebServer server(80);
 
@@ -50,33 +52,18 @@ String getUptime() {
 }
 
 String getStatistics() {
-  unsigned int totalWaterUsage = Core::hotWaterUsedWithPump + Core::hotWaterUsedWithoutPump;
-  float hitPercentage = (totalWaterUsage > 0) ? (Core::hotWaterUsedWithPump * 100.0 / totalWaterUsage) : 0;
-  float missPercentage = (totalWaterUsage > 0) ? (Core::hotWaterUsedWithoutPump * 100.0 / totalWaterUsage) : 0;
-  float wastePercentage = (Core::pumpRunWithoutUsage > 0) ? (Core::pumpRunWithoutUsage * 100.0 / (Core::pumpRunWithoutUsage + totalWaterUsage)) : 0;
-
-  const int totalSlots = 7 * 96;
-  int activeSlots = 0;
-
-  for (int day = 0; day < 7; day++) {
-      for (int slot = 0; slot < 96; slot++) {
-          if (Core::usagePattern[day][slot] > 0) {
-              activeSlots++;
-          }
-      }
-  }
-
-  float weeklyPercentage = activeSlots * 100.0 / totalSlots;
-
-  String json = "{";
-  json += "\"hotWaterUsedWithPump\": " + String(Core::hotWaterUsedWithPump) + ",";
-  json += "\"hotWaterUsedWithoutPump\": " + String(Core::hotWaterUsedWithoutPump) + ",";
-  json += "\"pumpRunWithoutUsage\": " + String(Core::pumpRunWithoutUsage) + ",";
-  json += "\"weekly_percentage\": " + String(weeklyPercentage, 2) + ",";
-  json += "\"hit_percentage\": " + String(hitPercentage, 2) + ",";
-  json += "\"miss_percentage\": " + String(missPercentage, 2) + ",";
-  json += "\"waste_percentage\": " + String(wastePercentage, 2);
-  json += "}";
+  PumpStats::Result r = PumpStats::compute();
+  StaticJsonDocument<512> doc;
+  doc["covered_hours"] = serialized(String(r.coveredHours, 1));
+  doc["run_hours_7d"] = serialized(String(r.runHours, 2));
+  if (!isnan(r.runPercent)) doc["run_percentage_7d"] = serialized(String(r.runPercent, 1));
+  doc["usage_events_7d"] = r.usageEvents;
+  doc["suspect_events_7d"] = r.suspectEvents;
+  if (!isnan(r.hitPercent)) doc["hit_percentage_7d"] = serialized(String(r.hitPercent, 1));
+  if (!isnan(r.wastePercent)) doc["waste_percentage_7d"] = serialized(String(r.wastePercent, 1));
+  doc["scheduled_percentage"] = serialized(String(PumpStats::scheduledPercent(), 1));
+  String json;
+  serializeJson(doc, json);
   return json;
 }
 
@@ -278,8 +265,26 @@ void webserversetup()
                   }
               }
               
+              function fmt(v, unit) { return (v === undefined || v === null) ? '– (not enough data)' : v + unit; }
+
+              function updateStats() {
+                fetch('/getstats')
+                  .then(response => response.json())
+                  .then(data => {
+                    document.getElementById('run_percentage_7d').innerText = fmt(data.run_percentage_7d, ' %');
+                    document.getElementById('run_hours_7d').innerText = data.run_hours_7d + ' h';
+                    document.getElementById('usage_events_7d').innerText = data.usage_events_7d;
+                    document.getElementById('hit_percentage_7d').innerText = fmt(data.hit_percentage_7d, ' %');
+                    document.getElementById('waste_percentage_7d').innerText = fmt(data.waste_percentage_7d, ' %');
+                    document.getElementById('suspect_events_7d').innerText = data.suspect_events_7d;
+                    document.getElementById('covered_hours').innerText = data.covered_hours + ' h';
+                  })
+                  .catch(error => console.error('Error fetching stats:', error));
+              }
+
               setInterval(updateStatus, 3000); // Update every 3 seconds
-              window.onload = updateStatus;
+              setInterval(updateStats, 15000); // Statistics change slowly
+              window.onload = function() { updateStatus(); updateStats(); };
             </script>
           </head>
           <body>
@@ -326,12 +331,47 @@ void webserversetup()
               </div>
               
               <div class="card">
+                <h2>📈 Statistics (rolling 7 days, measured)</h2>
+                <div class="status-grid">
+                  <div class="status-item">
+                    <strong>⏱️ Pump running</strong>
+                    <span id="run_percentage_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>🕒 Pump run time</strong>
+                    <span id="run_hours_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>🚿 Usage events</strong>
+                    <span id="usage_events_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>🎯 Pump already on at usage</strong>
+                    <span id="hit_percentage_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>♻️ Run time without usage</strong>
+                    <span id="waste_percentage_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>⚠️ Suspect detections (pump-induced?)</strong>
+                    <span id="suspect_events_7d" class="loading">Loading...</span>
+                  </div>
+                  <div class="status-item">
+                    <strong>📅 Data covers</strong>
+                    <span id="covered_hours" class="loading">Loading...</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
                 <h2>⚙️ Configuration</h2>
                 <ul class="config-links">
                   <li><a href="/grid">📅 Edit Usage Grid</a></li>
                   <li><a href="/config">🔧 Configuration</a></li>
                   <li><a href="/wificonfig">📶 WiFi Setup</a></li>
                   <li><a href="/timeconfig">🕐 Set Time/Date</a></li>
+                  <li><a href="/mqttconfig">🏠 MQTT / Home Assistant</a></li>
                   <li><a href="/update">⬆️ OTA Update</a></li>
                 </ul>
               </div>
@@ -1021,25 +1061,10 @@ void webserversetup()
       });
       
       server.on("/enablepump", HTTP_POST, []() {
-        if (!Core::pumpActivated) {
-          // Get current time slot and increase usage by 1
-          time_t now = time(nullptr);
-          if (now && now > 100000) {
-            struct tm timeinfo;
-            getLocalTime(&timeinfo);
-            int currentDay = timeinfo.tm_wday;
-            int currentSlot = (timeinfo.tm_hour * 4) + (timeinfo.tm_min / 15);
-            
-            // Increment usage pattern which will trigger pump activation
-            Core::usagePattern[currentDay][currentSlot] = max(1, Core::usagePattern[currentDay][currentSlot] + 1);
-            saveUsagePattern();
-            
-            server.send(200, "text/plain", "Pump enabled for current time slot");
-          } else {
-            server.send(500, "text/plain", "Time not synchronized");
-          }
-        } else {
-          server.send(400, "text/plain", "Pump is already running");
-        }
+        String message;
+        int code = Core::enablePumpNow(message);
+        server.send(code, "text/plain", message);
       });
+
+      PumpMqtt::registerRoutes();
 }
