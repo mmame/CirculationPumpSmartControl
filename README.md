@@ -26,8 +26,14 @@ looked up online.
   a **hot water usage** is detected.
 * The week is divided into 7 x 96 slots of 15 minutes. A detected usage raises the counter of
   the current slot by `increaseOnUsage`; a slot that ends without usage lowers its counter by 1.
-* The pump runs in every slot whose counter is above 0. The **Enable Pump** button (web UI,
-  Home Assistant) raises the counter of the current slot by one and so starts the pump right away.
+* The pump runs in every slot whose counter is above 0, **shifted earlier by the pump lead time**
+  (`/config`, default 5 min, 0 = off): it switches on `lead` minutes before an active slot begins
+  and off `lead` minutes before it ends, so the water is already circulated when the slot starts and
+  is still warm at its end. The total run time does not change. The shift is computed from the
+  local time of *now + lead*, so it also works across midnight, across the week change
+  (Saturday 23:55 -> Sunday slot 0) and at daylight saving time changes.
+* The **Enable Pump** button (web UI, Home Assistant) raises the counter of the slot that is
+  currently controlling the pump by one and so starts the pump right away.
 * The usage grid can be viewed, edited and reset in the web UI.
 
 ## Web UI
@@ -36,7 +42,7 @@ Open `http://pump.local/` (or the IP address).
 
 | Page | Purpose |
 |---|---|
-| `/` | status, statistics, Enable Pump, restart |
+| `/` | status, running share, Enable Pump, restart |
 | `/grid` | edit the learned usage pattern |
 | `/config` | thresholds and timing |
 | `/wificonfig` | WiFi credentials (without credentials the device opens the access point `CirculationPumpSmartControl`) |
@@ -46,20 +52,17 @@ Open `http://pump.local/` (or the IP address).
 
 JSON endpoints: `GET /getstatus`, `GET /getstats`, `POST /enablepump`.
 
-## Statistics (rolling 7 days)
+## Running share
 
-All values are measured on the device and survive reboots (ring buffer of 7 x 96 slots in flash).
-Values that cannot be determined reliably are **not shown** instead of being estimated.
+The only statistic is the **weekly running share**: the percentage of the week (7 x 96 slots of
+15 minutes) in which the learned pattern runs the pump. It is shown on the start page, in
+`GET /getstats` and in Home Assistant, and is deterministic - it follows directly from the usage grid.
 
-| Value | Meaning | Shown when |
-|---|---|---|
-| Pump running | pump run time / covered time | at least 1 h of data |
-| Pump run time | hours the relay was on | always |
-| Usage events | slots with a detected usage | always |
-| Pump already on at usage | share of usages that found the pump already running | at least 10 usages |
-| Run time without usage | share of the run time in slots without a usage | at least 1 h of run time |
-| Suspect detections | detections within 3 min after the pump switched on/off, possibly caused by the pump itself and excluded from the two quotas above | always |
-| Scheduled share | share of the 672 slots in which the pattern would run the pump | always |
+Measured run times, a hit/miss rate or a "wasted" run time are deliberately **not** reported.
+Everything derived from the hot water usage detection would be misleading: the detection misses a
+usage that follows shortly after another one, because the inlet temperature has already dropped. (An
+earlier "wasted" value was dominated by the `increaseOnUsage` setting: with 7 it tends towards
+7/(7+1) = 87.5 % regardless of the real behaviour.)
 
 ## Home Assistant (MQTT)
 
@@ -67,7 +70,7 @@ Configure the broker under `/mqttconfig` (host, port, user, password). The devic
 Home Assistant MQTT discovery messages, so a device **Zirkulationspumpe** with these entities appears
 by itself:
 
-* sensors: line temperature, temperature change, pump (running), the statistics above, WiFi signal, uptime
+* sensors: line temperature, temperature change, pump (running), running share (week), WiFi signal, uptime
 * button: *Pumpe jetzt einschalten* (same as Enable Pump)
 * availability via last will (`circulationpump/status`)
 

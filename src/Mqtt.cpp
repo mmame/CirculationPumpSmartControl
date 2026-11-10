@@ -1,6 +1,5 @@
 #include "Mqtt.h"
 #include "Core.h"
-#include "Stats.h"
 #include "Webserverconfig.hpp"
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -55,20 +54,12 @@ static void publishState() {
   // Do not publish before the first temperature average exists.
   if (Core::currentAvgTemp == 0 && Core::initialAvgTemp == 0) return;
 
-  PumpStats::Result st = PumpStats::compute();
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<512> doc;
   doc["temp"] = serialized(String(Core::currentAvgTemp, 2));
   doc["prev_temp"] = serialized(String(Core::initialAvgTemp, 2));
   doc["delta"] = serialized(String(Core::deltaT, 2));
   doc["pump"] = Core::pumpActivated ? "ON" : "OFF";
-  // Values that cannot be determined reliably yet are omitted -> "unknown" in Home Assistant.
-  if (!isnan(st.runPercent)) doc["run_pct"] = serialized(String(st.runPercent, 1));
-  doc["run_hours"] = serialized(String(st.runHours, 2));
-  doc["usage_events"] = st.usageEvents;
-  doc["suspect_events"] = st.suspectEvents;
-  if (!isnan(st.hitPercent)) doc["hit_pct"] = serialized(String(st.hitPercent, 1));
-  if (!isnan(st.wastePercent)) doc["waste_pct"] = serialized(String(st.wastePercent, 1));
-  doc["scheduled_pct"] = serialized(String(PumpStats::scheduledPercent(), 1));
+  doc["weekly_pct"] = serialized(String(Core::weeklyPercentage(), 1));
   doc["uptime"] = (uint32_t)(esp_timer_get_time() / 1000000ULL);
   doc["rssi"] = WiFi.RSSI();
 
@@ -111,14 +102,7 @@ static void publishDiscovery() {
            "\"stat_t\":\"" + topicState() + "\",\"val_tpl\":\"{{ value_json.pump }}\","
            "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\"");
 
-  // Rolling 7 day statistics (measured on the device)
-  discover("sensor", "run_pct", "Laufanteil 7 Tage", stateSensor("run_pct", "%", ""));
-  discover("sensor", "run_hours", "Laufzeit 7 Tage", stateSensor("run_hours", "h", "duration"));
-  discover("sensor", "usage", "Zapfungen 7 Tage", stateSensor("usage_events", "", ""));
-  discover("sensor", "hit", "Pumpe lief bei Zapfung", stateSensor("hit_pct", "%", ""));
-  discover("sensor", "waste", "Laufzeit ohne Zapfung", stateSensor("waste_pct", "%", ""));
-  discover("sensor", "suspect", "Verdächtige Erkennungen 7 Tage", stateSensor("suspect_events", "", "", true));
-  discover("sensor", "scheduled", "Geplanter Laufanteil", stateSensor("scheduled_pct", "%", "", true));
+  discover("sensor", "weekly", "Laufanteil", stateSensor("weekly_pct", "%", ""));
 
   discover("sensor", "rssi", "WLAN-Signal", stateSensor("rssi", "dBm", "signal_strength", true));
   discover("sensor", "uptime", "Laufzeit seit Start", stateSensor("uptime", "s", "duration", true));

@@ -8,7 +8,6 @@
 #include <ESPmDNS.h>
 #include "Webserverconfig.hpp"
 #include "Mqtt.h"
-#include "Stats.h"
 
 #define MDNS_NAME "pump"
 
@@ -90,6 +89,7 @@ void setup() {
   Core::measureDuration = Core::preferences.getUInt("measureDuration", MeasureDurationDefault);
   Core::sleepDuration = Core::preferences.getUInt("sleepDuration", SleepDurationDefault);
   Core::increaseOnUsage = Core::preferences.getUInt("increaseOnUsage", IncreaseOnUsageDefault);
+  Core::pumpLeadMinutes = min(10u, (unsigned int)Core::preferences.getUInt("pumpLead", PumpLeadMinutesDefault));
 
   // Load Wi-Fi credentials
   loadWiFiCredentials();
@@ -122,7 +122,11 @@ void setup() {
 
   // Load usage patterns
   loadUsagePattern();
-  PumpStats::begin();
+
+  // Legacy: remove the measured-statistics data of an earlier firmware version from flash
+  Core::preferences.remove("stRing");
+  Core::preferences.remove("stHead");
+  Core::preferences.remove("stFirst");
 
   sensors.begin();
   sensors.setResolution(11);
@@ -189,18 +193,20 @@ void loop() {
   server.handleClient();
 
   PumpMqtt::loop();
-  PumpStats::tick(Core::pumpActivated);
 
   temperatureMeasurement();
 
   updateUsagePattern();
 
-  // Activate or deactivate pump based on the usage pattern
+  // Activate or deactivate pump based on the usage pattern.
+  // The pump window is shifted earlier by pumpLeadMinutes: the pump runs while the learned
+  // pattern is active at (now + lead). So it starts <lead> minutes before an active slot begins
+  // and stops <lead> minutes before it ends. Day/week rollover is handled by slotAt().
   if (time(nullptr) > 100000)
   {
-    int currentDay = getCurrentDay();
-    int currentSlot = getCurrentTimeSlot();
-    if (shouldActivatePump(currentDay, currentSlot)) {
+    int day, slot;
+    Core::slotAt(time(nullptr) + (time_t)Core::pumpLeadMinutes * 60, day, slot);
+    if (shouldActivatePump(day, slot)) {
       activatePump();
     } else {
       deactivatePump();
@@ -245,7 +251,6 @@ void temperatureMeasurement() {
 
               if (Core::deltaT <= -Core::threshold) {
                   Serial.println(">>> Hot water usage detected! <<<");
-                  PumpStats::onUsageDetected(Core::pumpActivated);
                   recordUsage();  // Trigger logging & pump activation
               }
           }

@@ -1,6 +1,5 @@
 #include "Webserverconfig.hpp"
 #include "Mqtt.h"
-#include "Stats.h"
 
 WebServer server(80);
 
@@ -52,16 +51,9 @@ String getUptime() {
 }
 
 String getStatistics() {
-  PumpStats::Result r = PumpStats::compute();
-  StaticJsonDocument<512> doc;
-  doc["covered_hours"] = serialized(String(r.coveredHours, 1));
-  doc["run_hours_7d"] = serialized(String(r.runHours, 2));
-  if (!isnan(r.runPercent)) doc["run_percentage_7d"] = serialized(String(r.runPercent, 1));
-  doc["usage_events_7d"] = r.usageEvents;
-  doc["suspect_events_7d"] = r.suspectEvents;
-  if (!isnan(r.hitPercent)) doc["hit_percentage_7d"] = serialized(String(r.hitPercent, 1));
-  if (!isnan(r.wastePercent)) doc["waste_percentage_7d"] = serialized(String(r.wastePercent, 1));
-  doc["scheduled_percentage"] = serialized(String(PumpStats::scheduledPercent(), 1));
+  StaticJsonDocument<128> doc;
+  doc["weekly_percentage"] = serialized(String(Core::weeklyPercentage(), 1));
+  doc["pump_lead_minutes"] = Core::pumpLeadMinutes;
   String json;
   serializeJson(doc, json);
   return json;
@@ -265,19 +257,11 @@ void webserversetup()
                   }
               }
               
-              function fmt(v, unit) { return (v === undefined || v === null) ? '– (not enough data)' : v + unit; }
-
               function updateStats() {
                 fetch('/getstats')
                   .then(response => response.json())
                   .then(data => {
-                    document.getElementById('run_percentage_7d').innerText = fmt(data.run_percentage_7d, ' %');
-                    document.getElementById('run_hours_7d').innerText = data.run_hours_7d + ' h';
-                    document.getElementById('usage_events_7d').innerText = data.usage_events_7d;
-                    document.getElementById('hit_percentage_7d').innerText = fmt(data.hit_percentage_7d, ' %');
-                    document.getElementById('waste_percentage_7d').innerText = fmt(data.waste_percentage_7d, ' %');
-                    document.getElementById('suspect_events_7d').innerText = data.suspect_events_7d;
-                    document.getElementById('covered_hours').innerText = data.covered_hours + ' h';
+                    document.getElementById('weekly_percentage').innerText = data.weekly_percentage + ' %';
                   })
                   .catch(error => console.error('Error fetching stats:', error));
               }
@@ -331,35 +315,11 @@ void webserversetup()
               </div>
               
               <div class="card">
-                <h2>📈 Statistics (rolling 7 days, measured)</h2>
+                <h2>📈 Pump running share</h2>
                 <div class="status-grid">
                   <div class="status-item">
-                    <strong>⏱️ Pump running</strong>
-                    <span id="run_percentage_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>🕒 Pump run time</strong>
-                    <span id="run_hours_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>🚿 Usage events</strong>
-                    <span id="usage_events_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>🎯 Pump already on at usage</strong>
-                    <span id="hit_percentage_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>♻️ Run time without usage</strong>
-                    <span id="waste_percentage_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>⚠️ Suspect detections (pump-induced?)</strong>
-                    <span id="suspect_events_7d" class="loading">Loading...</span>
-                  </div>
-                  <div class="status-item">
-                    <strong>📅 Data covers</strong>
-                    <span id="covered_hours" class="loading">Loading...</span>
+                    <strong>🗓️ Weekly running share (learned pattern)</strong>
+                    <span id="weekly_percentage" class="loading">Loading...</span>
                   </div>
                 </div>
               </div>
@@ -425,6 +385,8 @@ void webserversetup()
       
                         "<label for='increaseOnUsage'>Usage Pattern Increase Value:</label>"
                         "<input type='number' id='increaseOnUsage' name='increaseOnUsage' value='" + String(Core::increaseOnUsage) + "' min='1' max='20'>"
+                        "<label for='pumpLead'>Pump lead time (min, 0 = off): the pump starts and stops this many minutes before the learned slot starts/ends</label>"
+                        "<input type='number' id='pumpLead' name='pumpLead' value='" + String(Core::pumpLeadMinutes) + "' min='0' max='10'>"
       
                         "<div class='button-container'>"
                         "<input type='submit' value='Save Configuration' class='btn save-btn'>"
@@ -455,6 +417,10 @@ void webserversetup()
             Core::increaseOnUsage = server.arg("increaseOnUsage").toInt();
             Core::preferences.putUInt("increaseOnUsage", Core::increaseOnUsage);
           }
+          if (server.hasArg("pumpLead")) {
+            Core::pumpLeadMinutes = constrain(server.arg("pumpLead").toInt(), 0, 10);
+            Core::preferences.putUInt("pumpLead", Core::pumpLeadMinutes);
+          }
           server.send(200, "text/html", "<h2>Configuration Saved! <a href='/config'>Back</a></h2>");
       });
       
@@ -463,10 +429,12 @@ void webserversetup()
         Core::threshold = TempChangeThresholdDefault;
         Core::measureDuration = MeasureDurationDefault;
         Core::sleepDuration = SleepDurationDefault;
+        Core::pumpLeadMinutes = PumpLeadMinutesDefault;
       
         Core::preferences.putFloat("threshold", Core::threshold);
         Core::preferences.putUInt("measureDuration", Core::measureDuration);
         Core::preferences.putUInt("sleepDuration", Core::sleepDuration);
+        Core::preferences.putUInt("pumpLead", Core::pumpLeadMinutes);
       
           server.send(200, "text/plain", "Configuration reset to default values.");
       });

@@ -12,6 +12,7 @@
 #define SleepDurationDefault 25000
 #define TempChangeThresholdDefault 2.0
 #define IncreaseOnUsageDefault 5
+#define PumpLeadMinutesDefault 5   // pump runs this many minutes earlier than the learned slot (0 = off)
 
 struct Core {
     // Preferences storage
@@ -22,6 +23,7 @@ struct Core {
     static unsigned long measureDuration;
     static unsigned long sleepDuration;
     static unsigned int increaseOnUsage;
+    static unsigned int pumpLeadMinutes;  // 0..10, shifts the pump window earlier
     static bool pumpActivated;
 
     // RTC variables
@@ -47,6 +49,13 @@ struct Core {
     // Switch the pump on for the current 15 min slot (same as the web UI button).
     // Returns the HTTP status code (200 ok, 400 already running, 500 time not synced).
     static int enablePumpNow(String& message);
+
+    // Share of the week (7 x 96 slots of 15 min) in which the learned pattern runs the pump, in percent.
+    static float weeklyPercentage();
+
+    // Weekday (0 = Sunday) and 15 min slot (0..95) of a point in time, in local time.
+    // Handles day and week rollover (Saturday 23:55 + 5 min -> Sunday slot 0) and DST.
+    static void slotAt(time_t t, int& day, int& slot);
 
     // Functions
     static void begin();
